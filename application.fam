@@ -8,4 +8,8 @@ App(
     fap_icon="icon.png",
     fap_category="GPIO",
     fap_icon_assets="assets",
+    fap_author="hypery11",
+    fap_version="1.0.0",
+    fap_description="Unlock Tesla FSD via CAN bus. Auto-detects HW3/HW4. Requires CAN Add-On.",
+    fap_weburl="https://github.com/hypery11/flipper-tesla-fsd",
 )
