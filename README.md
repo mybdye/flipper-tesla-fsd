@@ -1,3 +1,5 @@
+[English](README.md) | [繁體中文](README_zh-TW.md)
+
 # Tesla FSD Unlock for Flipper Zero
 
 Unlock Tesla FSD on your Flipper Zero. No subscription, no computer, just plug into OBD-II and go.
