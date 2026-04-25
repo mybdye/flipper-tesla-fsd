@@ -125,6 +125,13 @@ static int32_t fsd_running_worker(void* context) {
     bool shield_enabled = app->gtw_shield;
     state.gtw_shield_armed = false;
     state.tlssc_restore = app->tlssc_restore;
+    state.gtw_tier_override = app->gtw_tier_override;
+    state.assist_nav_enable = app->assist_nav_enable;
+    state.assist_hands_off = app->assist_hands_off;
+    state.assist_dev_mode = app->assist_dev_mode;
+    state.assist_lhd_override = app->assist_lhd_override;
+    state.assist_show_lane_graph = app->assist_show_lane_graph;
+    state.assist_tlssc_bit38 = app->assist_tlssc_bit38;
     furi_mutex_release(app->mutex);
 
     // Listen-only mode → MCP2515 hardware listen-only register

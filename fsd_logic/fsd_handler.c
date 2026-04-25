@@ -162,10 +162,11 @@ bool fsd_handle_autopilot_frame(FSDState* state, CANFRAME* frame) {
         }
         if(mux == 1) {
             fsd_set_bit(frame, 19, false);
-            // Enhanced Autopilot: also set bit 46 on mux=1 (enables EAP/summon)
-            // Source: ev-open-can-tools HW3Handler enhancedAutopilotRuntime
             if(state->enhanced_autopilot) {
                 fsd_set_bit(frame, 46, true);
+            }
+            if(state->assist_show_lane_graph) {
+                fsd_set_bit(frame, 45, true);
             }
             state->nag_suppressed = true;
             modified = true;

@@ -53,6 +53,55 @@ static void tlssc_restore_changed(VariableItem* item) {
     app->tlssc_restore = (idx == 1);
 }
 
+static void tier_override_changed(VariableItem* item) {
+    TeslaFSDApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, toggle_text[idx]);
+    app->gtw_tier_override = (idx == 1);
+}
+
+static void nav_enable_changed(VariableItem* item) {
+    TeslaFSDApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, toggle_text[idx]);
+    app->assist_nav_enable = (idx == 1);
+}
+
+static void hands_off_changed(VariableItem* item) {
+    TeslaFSDApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, toggle_text[idx]);
+    app->assist_hands_off = (idx == 1);
+}
+
+static void dev_mode_changed(VariableItem* item) {
+    TeslaFSDApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, toggle_text[idx]);
+    app->assist_dev_mode = (idx == 1);
+}
+
+static void lhd_override_changed(VariableItem* item) {
+    TeslaFSDApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, toggle_text[idx]);
+    app->assist_lhd_override = (idx == 1);
+}
+
+static void lane_graph_changed(VariableItem* item) {
+    TeslaFSDApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, toggle_text[idx]);
+    app->assist_show_lane_graph = (idx == 1);
+}
+
+static void tlssc_bit38_changed(VariableItem* item) {
+    TeslaFSDApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, toggle_text[idx]);
+    app->assist_tlssc_bit38 = (idx == 1);
+}
+
 static const char* const clock_text[] = {"16 MHz", "8 MHz", "12 MHz"};
 static void clock_changed(VariableItem* item) {
     TeslaFSDApp* app = variable_item_get_context(item);
@@ -106,6 +155,34 @@ void tesla_fsd_scene_settings_on_enter(void* context) {
     item = variable_item_list_add(list, "TLSSC Restore", 2, tlssc_restore_changed, app);
     variable_item_set_current_value_index(item, app->tlssc_restore ? 1 : 0);
     variable_item_set_current_value_text(item, toggle_text[app->tlssc_restore ? 1 : 0]);
+
+    item = variable_item_list_add(list, "Tier Override", 2, tier_override_changed, app);
+    variable_item_set_current_value_index(item, app->gtw_tier_override ? 1 : 0);
+    variable_item_set_current_value_text(item, toggle_text[app->gtw_tier_override ? 1 : 0]);
+
+    item = variable_item_list_add(list, "Nav FSD Route", 2, nav_enable_changed, app);
+    variable_item_set_current_value_index(item, app->assist_nav_enable ? 1 : 0);
+    variable_item_set_current_value_text(item, toggle_text[app->assist_nav_enable ? 1 : 0]);
+
+    item = variable_item_list_add(list, "Hands-Off (UI)", 2, hands_off_changed, app);
+    variable_item_set_current_value_index(item, app->assist_hands_off ? 1 : 0);
+    variable_item_set_current_value_text(item, toggle_text[app->assist_hands_off ? 1 : 0]);
+
+    item = variable_item_list_add(list, "Dev Mode", 2, dev_mode_changed, app);
+    variable_item_set_current_value_index(item, app->assist_dev_mode ? 1 : 0);
+    variable_item_set_current_value_text(item, toggle_text[app->assist_dev_mode ? 1 : 0]);
+
+    item = variable_item_list_add(list, "Force LHD", 2, lhd_override_changed, app);
+    variable_item_set_current_value_index(item, app->assist_lhd_override ? 1 : 0);
+    variable_item_set_current_value_text(item, toggle_text[app->assist_lhd_override ? 1 : 0]);
+
+    item = variable_item_list_add(list, "Lane Graph", 2, lane_graph_changed, app);
+    variable_item_set_current_value_index(item, app->assist_show_lane_graph ? 1 : 0);
+    variable_item_set_current_value_text(item, toggle_text[app->assist_show_lane_graph ? 1 : 0]);
+
+    item = variable_item_list_add(list, "TLSSC bit38", 2, tlssc_bit38_changed, app);
+    variable_item_set_current_value_index(item, app->assist_tlssc_bit38 ? 1 : 0);
+    variable_item_set_current_value_text(item, toggle_text[app->assist_tlssc_bit38 ? 1 : 0]);
 
     item = variable_item_list_add(list, "MCP Crystal", 3, clock_changed, app);
     variable_item_set_current_value_index(item, app->mcp_clock);
