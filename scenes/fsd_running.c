@@ -240,6 +240,10 @@ static int32_t fsd_running_worker(void* context) {
                    frame.canId == CAN_ID_AP_CONTROL) {
                     state.hw_version = TeslaHW_HW3;
                     state.speed_profile = 2;
+                    // Reprogram RXB0 filter from 0x3EE → 0x3FD for HW3
+                    init_mask(mcp, 0, 0x7FF);
+                    init_filter(mcp, 0, CAN_ID_AP_CONTROL);
+                    init_filter(mcp, 1, CAN_ID_AP_CONTROL);
                     // Update app-level HW for UI display
                     furi_mutex_acquire(app->mutex, FuriWaitForever);
                     app->hw_version = TeslaHW_HW3;
