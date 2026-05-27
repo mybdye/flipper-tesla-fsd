@@ -42,6 +42,7 @@ struct FSDState {
     // ── Feature flags (runtime-toggleable) ───────────────────────────────────
     bool           force_fsd;               // bypass UI selection check
     bool           suppress_speed_chime;    // HW4 ISA_SPEED chime suppress
+    bool           ignore_ota;              // allow TX while Tesla OTA is detected
     bool           china_mode;              // bypass FSD UI selection check for China vehicles
     bool           emergency_vehicle_detect;// set bit59 in mux0 (HW4)
     bool           nag_killer;              // 0x370 counter+1 echo
