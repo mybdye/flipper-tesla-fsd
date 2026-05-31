@@ -16,11 +16,18 @@
 
 #define MAX_LEN 8
 
-// CAN frame as handled by the MCP2515 driver and the FSD protocol logic.
+// CAN frame shared by the MCP2515 driver, the FSD protocol logic, and the ESP32
+// firmware. The anonymous unions expose two field-name conventions over the
+// same storage so both platforms keep their existing accessors while sharing
+// one struct definition:
+//   Flipper / mcp driver : canId / data_lenght / buffer
+//   ESP32 firmware        : id    / dlc         / data   (CanFrame == CANFRAME)
+// Same size and layout as before, so this is behavior-preserving for the
+// existing Flipper build.
 typedef struct {
-    uint32_t canId;
-    uint8_t  ext;
-    uint8_t  req;
-    uint8_t  data_lenght;
-    uint8_t  buffer[MAX_LEN];
+    union { uint32_t canId; uint32_t id; };
+    uint8_t ext;
+    uint8_t req;
+    union { uint8_t data_lenght; uint8_t dlc; };
+    union { uint8_t buffer[MAX_LEN]; uint8_t data[MAX_LEN]; };
 } CANFRAME;

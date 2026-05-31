@@ -4,12 +4,13 @@
 #include <stdbool.h>
 #include "config.h"
 
-// ── CAN frame (shared by all drivers) ────────────────────────────────────────
-struct CanFrame {
-    uint32_t id;
-    uint8_t  dlc;
-    uint8_t  data[8];
-};
+// ── CAN frame ─────────────────────────────────────────────────────────────────
+// Unified with the Flipper build: CanFrame is the shared CANFRAME
+// (fsd_logic/fsd_types.h). Its anonymous unions expose id/dlc/data here and
+// canId/data_lenght/buffer on the Flipper side over the same storage, so this
+// firmware's existing frame.id / frame.dlc / frame.data accessors are unchanged.
+#include "../../fsd_logic/fsd_types.h"
+typedef CANFRAME CanFrame;
 
 // ── Hardware version ──────────────────────────────────────────────────────────
 typedef enum {
