@@ -625,6 +625,112 @@ bool fsd_handle_track_mode_inject(FSDState* state, CANFRAME* frame) {
     return true;
 }
 
+// --- Scroll-Press AP Engage (0x3C2, HW4-only) ---
+//
+// Per @JakNo's bench testing in #43: injecting the right-scrollwheel-down
+// sequence on VCLEFT_switchStatus mux=1 engages AP and the car treats it as
+// indistinguishable from a physical scrollwheel press. No counter, no CRC —
+// just replace the swcRightPressed bit-pair in 4 consecutive mux=1 frames.
+//
+// State machine across 0x3C2 mux=1 frames:
+//   state=0, armed=false  : initial; wait for das_ap_state==0 before arming
+//   state=0, armed=true   : armed; will fire when das_ap_state transitions to 1
+//   state=1..4            : actively firing frame N of the sequence
+//   state=5               : cooldown; wait for das_ap_state==0 before re-arming
+//
+// Sequence: swcRightPressed = 1, 2, 2, 1 across 4 consecutive frames.
+// Field is bits 12-13 of the 64-bit frame = byte 1 bits 4-5.
+
+// VCLEFT_switchStatus mux=1 signal positions (opendbc tesla_model3_vehicle.dbc):
+//   swcRightPressed    : startbit 12, 2 bits  → byte 1 bits 4-5
+//   swcRightScrollTicks: startbit 24, 6 bits signed → byte 3 bits 0-5
+#define SCROLL_SWC_PRESSED_PRESSED   1u   // "pressed" value (per @JakNo bench; pending re-confirm)
+#define SCROLL_SWC_SCROLLTICKS_UP    1u   // one detent up; 6-bit signed (+1). Direction pending @JakNo confirm
+// Phase durations per @JakNo's #82 flow (milliseconds, approximate — tune on-car)
+#define SCROLL_T_PRESS1_MS  250u
+#define SCROLL_T_SCROLL1_MS 150u
+#define SCROLL_T_PRESS2_MS  250u
+
+static void scroll_set_pressed(CANFRAME* frame, uint8_t v) {
+    frame->buffer[1] = (frame->buffer[1] & ~0x30u) | ((v & 0x03u) << 4);
+}
+
+static void scroll_set_scrollticks(CANFRAME* frame, uint8_t v) {
+    frame->buffer[3] = (frame->buffer[3] & ~0x3Fu) | (v & 0x3Fu);
+}
+
+bool fsd_handle_scroll_press_inject(FSDState* state, CANFRAME* frame, uint32_t now_ms) {
+    if(!state->scroll_press_ap) return false;
+    if(state->hw_version != TeslaHW_HW4) return false;     // HW4-only per v2.15 scope
+    if(state->op_mode != OpMode_Service) return false;     // Service mode safety gate
+    if(frame->data_lenght < 4) return false;               // need byte 3 for scrollTicks
+
+    // VCLEFT_switchStatusIndex (mux) at byte 0 bits 0-1. Right-scroll lives on mux=1.
+    uint8_t mux = frame->buffer[0] & 0x03;
+    if(mux != 1) return false;
+
+    uint8_t ap = state->das_ap_state;
+
+    // Arm tracking: require a UNAVAIL observation before any fire, then before each re-fire.
+    if(ap == 0) {
+        state->scroll_press_armed = true;
+        if(state->scroll_press_state == 5) {
+            state->scroll_press_state = 0; // cooldown cleared, ready to re-arm
+        }
+    }
+
+    // Rising-edge fire trigger: AP UNAVAIL(0)→AVAIL(1) while armed.
+    if(state->scroll_press_state == 0 && state->scroll_press_armed && ap == 1) {
+        state->scroll_press_state = 1;          // enter phase 1 (press1)
+        state->scroll_press_armed = false;
+        state->scroll_press_phase_ms = now_ms;
+    }
+
+    if(state->scroll_press_state < 1 || state->scroll_press_state > 4) {
+        return false;
+    }
+
+    uint32_t elapsed = now_ms - state->scroll_press_phase_ms;
+    bool modified = false;
+
+    switch(state->scroll_press_state) {
+    case 1: // 1st press, hold for ~250 ms
+        scroll_set_pressed(frame, SCROLL_SWC_PRESSED_PRESSED);
+        modified = true;
+        if(elapsed >= SCROLL_T_PRESS1_MS) {
+            state->scroll_press_state = 2;
+            state->scroll_press_phase_ms = now_ms;
+        }
+        break;
+    case 2: // scroll up, hold for ~150 ms
+        scroll_set_scrollticks(frame, SCROLL_SWC_SCROLLTICKS_UP);
+        modified = true;
+        if(elapsed >= SCROLL_T_SCROLL1_MS) {
+            state->scroll_press_state = 3;
+            state->scroll_press_phase_ms = now_ms;
+        }
+        break;
+    case 3: // 2nd press, hold for ~250 ms
+        scroll_set_pressed(frame, SCROLL_SWC_PRESSED_PRESSED);
+        modified = true;
+        if(elapsed >= SCROLL_T_PRESS2_MS) {
+            state->scroll_press_state = 4;
+            state->scroll_press_phase_ms = now_ms;
+        }
+        break;
+    case 4: // final scroll up, single frame, then cooldown
+        scroll_set_scrollticks(frame, SCROLL_SWC_SCROLLTICKS_UP);
+        modified = true;
+        state->scroll_press_state = 5; // cooldown until AP drops to UNAVAIL
+        break;
+    default:
+        return false;
+    }
+
+    if(modified) state->frames_modified++;
+    return modified;
+}
+
 // --- SCCM_leftStalk (0x249) builders — Party CAN, 3 bytes ---
 // Frame layout:
 //   byte0: CRC = (0x49 + 0x02 + byte1 + byte2) & 0xFF
