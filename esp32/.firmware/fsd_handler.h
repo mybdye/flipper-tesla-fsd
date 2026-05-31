@@ -13,18 +13,12 @@
 typedef CANFRAME CanFrame;
 
 // ── Hardware version ──────────────────────────────────────────────────────────
-typedef enum {
-    TeslaHW_Unknown = 0,
-    TeslaHW_Legacy,   // HW1 / HW2
-    TeslaHW_HW3,
-    TeslaHW_HW4,
-} TeslaHWVersion;
+// TeslaHWVersion and OpMode are defined in the shared fsd_types.h (included
+// above). OpMode is numbered ListenOnly=0, Active=1, Service=2 — the
+// ListenOnly/Active values match what this firmware already persists in NVS.
 
 // ── Operation mode ────────────────────────────────────────────────────────────
-typedef enum {
-    OpMode_ListenOnly = 0,  // default on boot: no TX
-    OpMode_Active,          // TX enabled
-} OpMode;
+// (OpMode: see fsd_types.h)
 
 // ── Full FSD state ────────────────────────────────────────────────────────────
 struct FSDState {

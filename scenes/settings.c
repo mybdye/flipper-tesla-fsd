@@ -31,7 +31,8 @@ static void nag_killer_changed(VariableItem* item) {
     app->nag_killer = (idx == 1);
 }
 
-static const char* const op_mode_text[] = {"Active", "Listen", "Service"};
+// Order matches OpMode in fsd_types.h: ListenOnly=0, Active=1, Service=2.
+static const char* const op_mode_text[] = {"Listen", "Active", "Service"};
 static void op_mode_changed(VariableItem* item) {
     TeslaFSDApp* app = variable_item_get_context(item);
     uint8_t idx = variable_item_get_current_value_index(item);

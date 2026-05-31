@@ -31,3 +31,22 @@ typedef struct {
     union { uint8_t data_lenght; uint8_t dlc; };
     union { uint8_t buffer[MAX_LEN]; uint8_t data[MAX_LEN]; };
 } CANFRAME;
+
+// ── Hardware version (shared by both platforms) ───────────────────────────────
+typedef enum {
+    TeslaHW_Unknown = 0,
+    TeslaHW_Legacy,   // HW1 / HW2 / EAP retrofit — uses 0x3EE / 0x045
+    TeslaHW_HW3,
+    TeslaHW_HW4,
+} TeslaHWVersion;
+
+// ── Operation mode (shared by both platforms) ─────────────────────────────────
+// Numbering matches the ESP32's persisted NVS values (ListenOnly=0, Active=1),
+// so unifying the enum needs no migration; the ESP32 web UI's op_mode===1==Active
+// check also stays valid. Service is Flipper-only (already 2 there). ListenOnly
+// is the safe boot default — no TX.
+typedef enum {
+    OpMode_ListenOnly = 0,  // pure passive sniff, no TX at all
+    OpMode_Active,          // RX + TX, normal operation
+    OpMode_Service,         // unrestricted, gates aggressive features (Flipper)
+} OpMode;

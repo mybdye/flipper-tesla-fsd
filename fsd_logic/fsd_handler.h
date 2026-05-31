@@ -45,18 +45,8 @@
 #define CAN_ID_DRIVER_ASSIST 0x3F8  // 1016 - UI_driverAssistControl (also follow distance — Party CAN)
 #define CAN_ID_VCLEFT_SWITCH 0x3C2  // 962  - VCLEFT_switchStatus (steering-wheel scrollwheel buttons — Vehicle CAN)
 
-typedef enum {
-    TeslaHW_Unknown = 0,
-    TeslaHW_Legacy,
-    TeslaHW_HW3,
-    TeslaHW_HW4,
-} TeslaHWVersion;
-
-typedef enum {
-    OpMode_Active = 0,    // RX + TX, normal operation
-    OpMode_ListenOnly,    // pure passive sniff, no TX at all
-    OpMode_Service,       // unrestricted, gates aggressive features
-} OpMode;
+// TeslaHWVersion and OpMode are defined in fsd_types.h (shared with the ESP32
+// build). OpMode is now numbered ListenOnly=0, Active=1, Service=2.
 
 typedef struct {
     TeslaHWVersion hw_version;
