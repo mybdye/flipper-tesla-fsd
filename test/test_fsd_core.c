@@ -224,6 +224,131 @@ static void test_di_speed(void) {
     CHECK(s.speed_seen, "speed_seen set after parse");
 }
 
+// ── 0x331 TLSSC restore ───────────────────────────────────────────────────────
+static void test_tlssc_restore(void) {
+    FSDState s;
+    memset(&s, 0, sizeof(s));
+    s.tlssc_restore = true;
+    CANFRAME f;
+    zero(&f);
+    f.data_lenght = 8;
+
+    f.buffer[0] = 0x00;
+    CHECK(fsd_handle_tlssc_restore(&s, &f), "tlssc modifies fresh byte0");
+    CHECK(f.buffer[0] == 0x1B, "tlssc byte0 -> 0x1B got 0x%02X", f.buffer[0]);
+    // already-restored frame: no change, returns false
+    CHECK(fsd_handle_tlssc_restore(&s, &f) == false, "tlssc no-op when already 0x1B");
+    // upper 2 bits preserved
+    f.buffer[0] = 0xC5;
+    CHECK(fsd_handle_tlssc_restore(&s, &f), "tlssc modifies 0xC5");
+    CHECK(f.buffer[0] == 0xDB, "tlssc preserves top bits -> 0xDB got 0x%02X", f.buffer[0]);
+
+    s.tlssc_restore = false;
+    f.buffer[0] = 0x00;
+    CHECK(fsd_handle_tlssc_restore(&s, &f) == false, "tlssc disabled -> no-op");
+}
+
+// ── 0x313 track-mode inject + additive checksum ───────────────────────────────
+static void test_track_mode_crc(void) {
+    FSDState s;
+    memset(&s, 0, sizeof(s));
+    s.op_mode = OpMode_Service; // gated behind Service mode
+    s.track_mode_state = 2;     // user toggled
+    CANFRAME f;
+    zero(&f);
+    f.data_lenght = 8;
+    f.buffer[0] = 0xF0;
+    f.buffer[1] = 0x11;
+    f.buffer[2] = 0x22;
+
+    CHECK(fsd_handle_track_mode_inject(&s, &f), "track-mode reports modified");
+    CHECK((f.buffer[0] & 0x03) == 0x01, "track-mode sets request ON bit");
+    // Independent oracle: byte7 = (id_lo + id_hi + sum(byte0..6)) & 0xFF, 0x313.
+    uint16_t sum = (0x313 & 0xFF) + ((0x313 >> 8) & 0xFF);
+    for (int i = 0; i < 7; i++)
+        sum += f.buffer[i];
+    CHECK(f.buffer[7] == (uint8_t)(sum & 0xFF), "track-mode checksum got 0x%02X exp 0x%02X",
+          f.buffer[7], (uint8_t)(sum & 0xFF));
+
+    // Service-mode gate: not in Service -> no-op
+    s.op_mode = OpMode_Active;
+    CANFRAME g;
+    zero(&g);
+    g.data_lenght = 8;
+    CHECK(fsd_handle_track_mode_inject(&s, &g) == false, "track-mode gated outside Service");
+}
+
+// ── 0x249 SCCM_leftStalk builders + CRC ───────────────────────────────────────
+static uint8_t sccm_expected_crc(const CANFRAME* f) {
+    return (uint8_t)(((0x249 & 0xFF) + ((0x249 >> 8) & 0xFF) + f->buffer[1] + f->buffer[2]) & 0xFF);
+}
+
+static void test_sccm_crc(void) {
+    CANFRAME f;
+
+    fsd_build_highbeam_flash(&f, 3, true);
+    CHECK(f.canId == CAN_ID_SCCM_LSTALK, "highbeam id 0x249");
+    CHECK(f.data_lenght == 3, "highbeam dlc 3");
+    CHECK((f.buffer[1] & 0x0F) == 3, "highbeam counter=3");
+    CHECK((f.buffer[1] & 0x30) == 0x10, "highbeam PULL bit (status=1)");
+    CHECK(f.buffer[0] == sccm_expected_crc(&f), "highbeam CRC got 0x%02X exp 0x%02X",
+          f.buffer[0], sccm_expected_crc(&f));
+
+    fsd_build_turn_signal(&f, 5, 3); // 3 = DOWN_1 (left)
+    CHECK((f.buffer[1] & 0x0F) == 5, "turn counter=5");
+    CHECK((f.buffer[2] & 0x07) == 3, "turn direction=3");
+    CHECK(f.buffer[0] == sccm_expected_crc(&f), "turn CRC got 0x%02X exp 0x%02X",
+          f.buffer[0], sccm_expected_crc(&f));
+
+    fsd_build_wiper_wash(&f, 2);
+    CHECK((f.buffer[1] & 0x0F) == 2, "wiper counter=2");
+    CHECK((f.buffer[1] & 0xC0) == 0x40, "wiper 1ST_DETENT bit");
+    CHECK(f.buffer[0] == sccm_expected_crc(&f), "wiper CRC got 0x%02X exp 0x%02X",
+          f.buffer[0], sccm_expected_crc(&f));
+}
+
+// ── 0x370 nag killer: counter+1, hands-on spoof, self-consistent checksum ─────
+static void test_nag_killer(void) {
+    FSDState s;
+    memset(&s, 0, sizeof(s));
+    s.nag_killer = true;
+    s.das_hands_on_state = 0xFF; // no DAS frame seen -> conservative echo
+    s.nag_demand_active = false;
+
+    CANFRAME in;
+    zero(&in);
+    in.data_lenght = 8;
+    in.buffer[4] = 0x00; // handsOnLevel = 0 (nag imminent)
+    in.buffer[6] = 0x05; // counter = 5
+
+    CANFRAME out;
+    zero(&out);
+    CHECK(fsd_handle_nag_killer(&s, &in, &out), "nag echo emitted on level 0");
+    CHECK(out.canId == CAN_ID_EPAS_STATUS, "nag echo id 0x370");
+    CHECK(out.data_lenght == 8, "nag echo dlc 8");
+    CHECK(((out.buffer[4] >> 6) & 0x03) == 1, "nag spoofs handsOnLevel=1");
+    CHECK((out.buffer[6] & 0x0F) == 6, "nag counter+1 -> 6 got %u", out.buffer[6] & 0x0F);
+    // Checksum self-consistency: holds regardless of the (PRNG-driven) torque bytes.
+    uint16_t sum = 0;
+    for (int i = 0; i < 7; i++)
+        sum += out.buffer[i];
+    sum += (CAN_ID_EPAS_STATUS & 0xFF) + (CAN_ID_EPAS_STATUS >> 8);
+    CHECK(out.buffer[7] == (uint8_t)(sum & 0xFF), "nag checksum self-consistent got 0x%02X exp 0x%02X",
+          out.buffer[7], (uint8_t)(sum & 0xFF));
+
+    // skip paths
+    CANFRAME out2;
+    zero(&out2);
+    in.buffer[4] = 0x40; // handsOnLevel = 1 (hands detected)
+    CHECK(fsd_handle_nag_killer(&s, &in, &out2) == false, "nag skips when hands detected");
+    in.buffer[4] = 0x00;
+    s.das_hands_on_state = 0; // DAS satisfied
+    CHECK(fsd_handle_nag_killer(&s, &in, &out2) == false, "nag skips when DAS satisfied");
+    s.das_hands_on_state = 0xFF;
+    s.nag_killer = false;
+    CHECK(fsd_handle_nag_killer(&s, &in, &out2) == false, "nag skips when disabled");
+}
+
 // ── state init ────────────────────────────────────────────────────────────────
 static void test_state_init(void) {
     FSDState s;
@@ -242,6 +367,10 @@ int main(void) {
     test_autopilot_hw3();
     test_isa_checksum();
     test_di_speed();
+    test_tlssc_restore();
+    test_track_mode_crc();
+    test_sccm_crc();
+    test_nag_killer();
     test_state_init();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);

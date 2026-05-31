@@ -15,6 +15,6 @@ check: test_fsd_core
 	./test_fsd_core
 
 clean:
-	rm -f test_fsd_core
+	rm -rf test_fsd_core test_fsd_core.dSYM
 
 .PHONY: check clean

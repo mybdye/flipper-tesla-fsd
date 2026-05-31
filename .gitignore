@@ -9,3 +9,4 @@ __pycache__/
 
 # host unit-test binary (test/Makefile)
 test/test_fsd_core
+*.dSYM/
