@@ -12,7 +12,7 @@
 #include "libraries/mcp_can_2515.h"
 #include "fsd_logic/fsd_handler.h"
 
-#define TESLA_FSD_VERSION "2.9.0"
+#define TESLA_FSD_VERSION "2.16.0"
 
 typedef enum {
     TeslaFSDSceneMainMenu,
