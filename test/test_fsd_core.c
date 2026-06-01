@@ -611,6 +611,135 @@ static void test_gtw_shield(void) {
     CHECK(s.gtw_shield_blocks == 1, "shield block counted");
 }
 
+// ── 0x3C2 Scroll-Press AP engage: timed state machine ─────────────────────────
+// Phase timings mirror the #defines in fsd_handler.c (PRESS1=250, SCROLL1=150,
+// PRESS2=250 ms). swcRightPressed -> byte1 bits[5:4]; scrollTicks -> byte3 bits[5:0].
+static void mux1(CANFRAME* f) {
+    zero(f);
+    f->data_lenght = 8;
+    f->buffer[0] = 1; // VCLEFT_switchStatusIndex mux=1
+}
+
+static void test_scroll_press(void) {
+    FSDState s;
+    memset(&s, 0, sizeof(s));
+    s.hw_version = TeslaHW_HW4;
+    s.op_mode = OpMode_Service;
+    s.scroll_press_ap = true;
+
+    CANFRAME f;
+
+    // Gates: HW4-only, Service-only, mux==1 only.
+    s.hw_version = TeslaHW_HW3;
+    mux1(&f);
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 0) == false, "scroll gated: not HW4");
+    s.hw_version = TeslaHW_HW4;
+    s.op_mode = OpMode_Active;
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 0) == false, "scroll gated: not Service");
+    s.op_mode = OpMode_Service;
+    mux1(&f);
+    f.buffer[0] = 2; // wrong mux
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 0) == false, "scroll gated: mux!=1");
+
+    // Arm on AP UNAVAIL(0), no fire yet.
+    s.das_ap_state = 0;
+    mux1(&f);
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 100) == false, "scroll arms on UNAVAIL, no fire");
+    CHECK(s.scroll_press_armed, "scroll armed");
+
+    // Rising edge UNAVAIL->AVAIL fires phase 1 (press).
+    s.das_ap_state = 1;
+    mux1(&f);
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 1000), "scroll phase1 fires");
+    CHECK((f.buffer[1] & 0x30) == 0x10, "scroll phase1 press bits got 0x%02X", f.buffer[1] & 0x30);
+    CHECK(s.scroll_press_state == 1, "scroll state==1");
+
+    // After >=250ms, phase1 -> phase2.
+    mux1(&f);
+    fsd_handle_scroll_press_inject(&s, &f, 1260);
+    CHECK(s.scroll_press_state == 2, "scroll -> state2 got %u", s.scroll_press_state);
+
+    // Phase2 emits scroll-up.
+    mux1(&f);
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 1260), "scroll phase2 fires");
+    CHECK((f.buffer[3] & 0x3F) == 0x01, "scroll phase2 scroll bits got 0x%02X", f.buffer[3] & 0x3F);
+
+    // After >=150ms, phase2 -> phase3.
+    mux1(&f);
+    fsd_handle_scroll_press_inject(&s, &f, 1420);
+    CHECK(s.scroll_press_state == 3, "scroll -> state3 got %u", s.scroll_press_state);
+
+    // After >=250ms, phase3 -> phase4.
+    mux1(&f);
+    fsd_handle_scroll_press_inject(&s, &f, 1680);
+    CHECK(s.scroll_press_state == 4, "scroll -> state4 got %u", s.scroll_press_state);
+
+    // Phase4 emits the final scroll and enters cooldown(5).
+    mux1(&f);
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 1700), "scroll phase4 fires");
+    CHECK((f.buffer[3] & 0x3F) == 0x01, "scroll phase4 scroll bits");
+    CHECK(s.scroll_press_state == 5, "scroll -> cooldown(5) got %u", s.scroll_press_state);
+
+    // Cooldown: no re-fire while AP stays engaged.
+    mux1(&f);
+    CHECK(fsd_handle_scroll_press_inject(&s, &f, 2000) == false, "scroll cooldown no fire");
+
+    // Re-arm only after AP returns to UNAVAIL.
+    s.das_ap_state = 0;
+    mux1(&f);
+    fsd_handle_scroll_press_inject(&s, &f, 2100);
+    CHECK(s.scroll_press_state == 0 && s.scroll_press_armed, "scroll re-armed after UNAVAIL");
+}
+
+// ── read-only Party-CAN parsers ───────────────────────────────────────────────
+static void test_misc_parsers(void) {
+    FSDState s;
+    CANFRAME f;
+
+    memset(&s, 0, sizeof(s));
+    zero(&f);
+    f.data_lenght = 5;
+    f.buffer[1] = 0x20; // cruise_state = 2 (bits[6:4])
+    f.buffer[4] = 0x03; // park_brake = 3
+    f.buffer[3] = 0x06; // autopark = 3 (bits[4:1])
+    fsd_handle_di_state(&s, &f);
+    CHECK(s.di_cruise_state == 2, "di_state cruise got %u", s.di_cruise_state);
+    CHECK(s.di_park_brake_state == 3, "di_state park got %u", s.di_park_brake_state);
+    CHECK(s.di_autopark_state == 3, "di_state autopark got %u", s.di_autopark_state);
+
+    memset(&s, 0, sizeof(s));
+    zero(&f);
+    f.data_lenght = 2;
+    f.buffer[0] = 0x00;
+    f.buffer[1] = 0x0C; // raw = 3072 -> 3072*0.25 - 750 = 18.0 Nm
+    fsd_handle_di_torque(&s, &f);
+    CHECK(fabs(s.di_torque_nm - 18.0f) < 0.1f, "di_torque got %.2f", (double)s.di_torque_nm);
+    CHECK(s.di_torque_seen, "di_torque seen");
+
+    memset(&s, 0, sizeof(s));
+    zero(&f);
+    f.data_lenght = 7;
+    f.buffer[1] = 0x20; // buckle (bit5)
+    f.buffer[2] = 0xC0; // left (bit6) + right (bit7)
+    f.buffer[3] = 0x10; // door (bit4)
+    f.buffer[6] = 0x04; // high beam (bit2)
+    fsd_handle_ui_warning(&s, &f);
+    CHECK(s.ui_buckle_status, "ui buckle");
+    CHECK(s.ui_left_blinker && s.ui_right_blinker, "ui blinkers");
+    CHECK(s.ui_any_door_open, "ui door");
+    CHECK(s.ui_high_beam, "ui high beam");
+
+    memset(&s, 0, sizeof(s));
+    zero(&f);
+    f.data_lenght = 3;
+    f.buffer[0] = 0xE8;
+    f.buffer[1] = 0x43; // set_speed raw = 0x3E8 = 1000 -> 100.0 kph; acc_state = 4
+    fsd_handle_das_control(&s, &f);
+    CHECK(fabs(s.das_set_speed_kph - 100.0f) < 0.1f, "das_control speed got %.1f",
+          (double)s.das_set_speed_kph);
+    CHECK(s.das_acc_state == 4, "das_control acc_state got %u", s.das_acc_state);
+}
+
 // ── state init ────────────────────────────────────────────────────────────────
 static void test_state_init(void) {
     FSDState s;
@@ -643,6 +772,8 @@ int main(void) {
     test_gtw_tier();
     test_driver_assist();
     test_gtw_shield();
+    test_scroll_press();
+    test_misc_parsers();
     test_state_init();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
