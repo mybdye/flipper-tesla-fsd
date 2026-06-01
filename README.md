@@ -91,6 +91,10 @@
 - GTW autopilot tier readback (NONE/HIGHWAY/ENHANCED/SELF_DRIVING/BASIC)
 - OTA detection with debounce — auto-suspends TX during firmware updates unless the explicit Ignore OTA override is enabled
 
+### CAN Capture + Test Profiles (v2.16+)
+- **CAN Capture** — record every received frame to the SD card in candump format (`apps_data/tesla_mod/captures/`). Read-only; safe to run on any car. Feeds `tools/tesla_crc_cracker.py`.
+- **Send Test** — load a user-authored `.cantest` text profile from the SD card and replay your own frames. Defaults to dry-run; transmitting is hard-gated to a **parked, stationary** car (fail-closed) and re-checked before every frame. Result is logged for a bug report. Format + workflow: [docs/cantest-format.md](docs/cantest-format.md), example: [examples/example.cantest](examples/example.cantest).
+
 ### Settings (runtime toggles)
 
 **Stable (car-tested):**

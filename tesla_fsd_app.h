@@ -16,7 +16,7 @@
 
 #define FSD_SEND_MAX_STEPS 48
 
-#define TESLA_FSD_VERSION "2.16.0"
+#define TESLA_FSD_VERSION "2.16.1"
 
 typedef enum {
     TeslaFSDSceneMainMenu,
