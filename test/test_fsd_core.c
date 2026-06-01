@@ -22,6 +22,7 @@
 #include "fsd_capture.h"
 #include "fsd_checksum.h"
 #include "fsd_handler.h"
+#include "fsd_profile.h"
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -887,6 +888,68 @@ static void test_extras_and_builders(void) {
     CHECK(f.buffer[0] == 0x05, "precond byte0 got 0x%02X exp 0x05", f.buffer[0]);
 }
 
+// ── .cantest profile parser + send interlock ─────────────────────────────────
+static void test_profile(void) {
+    FsdProfileStep s;
+    char name[40];
+
+    // bare candump-style line
+    CHECK(fsd_profile_parse_line("229#00112233445566AA", &s, NULL, 0) == FSD_PLINE_STEP,
+          "profile bare line -> step");
+    CHECK(s.can_id == 0x229, "profile id got 0x%lX", (unsigned long)s.can_id);
+    CHECK(s.dlc == 8, "profile dlc 8 got %u", s.dlc);
+    CHECK(s.data[0] == 0x00 && s.data[7] == 0xAA, "profile data bytes");
+    CHECK(s.repeat == 1 && s.delay_ms == 50, "profile defaults repeat=1 delay=50");
+
+    // repeat=/delay= suffixes
+    CHECK(fsd_profile_parse_line("3FD#1000000000004000 repeat=20 delay=100", &s, NULL, 0) ==
+              FSD_PLINE_STEP, "profile with suffixes");
+    CHECK(s.can_id == 0x3FD && s.repeat == 20 && s.delay_ms == 100,
+          "profile r=%u d=%u", s.repeat, s.delay_ms);
+
+    // "delay=Nms" form + short dlc
+    CHECK(fsd_profile_parse_line("370#0011 delay=250ms", &s, NULL, 0) == FSD_PLINE_STEP,
+          "profile delay=Nms");
+    CHECK(s.delay_ms == 250 && s.dlc == 2, "profile d=%u dlc=%u", s.delay_ms, s.dlc);
+
+    // a raw capture-log line (copy-from-capture loop) must parse
+    CHECK(fsd_profile_parse_line("(1.234000) can0 370#0000000000000000", &s, NULL, 0) ==
+              FSD_PLINE_STEP, "profile accepts candump line");
+    CHECK(s.can_id == 0x370 && s.dlc == 8, "profile candump id/dlc");
+
+    // name header, comment, blank
+    CHECK(fsd_profile_parse_line("# Name: poke 229", &s, name, sizeof(name)) == FSD_PLINE_NAME,
+          "profile name header");
+    CHECK(strcmp(name, "poke 229") == 0, "profile name [%s]", name);
+    CHECK(fsd_profile_parse_line("# just a note", &s, NULL, 0) == FSD_PLINE_EMPTY, "profile comment");
+    CHECK(fsd_profile_parse_line("   ", &s, NULL, 0) == FSD_PLINE_EMPTY, "profile blank");
+
+    // malformed
+    CHECK(fsd_profile_parse_line("no hash here", &s, NULL, 0) == FSD_PLINE_ERROR, "profile no-#");
+    CHECK(fsd_profile_parse_line("229#0", &s, NULL, 0) == FSD_PLINE_ERROR, "profile odd hex");
+    CHECK(fsd_profile_parse_line("229#001122334455667788", &s, NULL, 0) == FSD_PLINE_ERROR,
+          "profile >8 bytes");
+
+    // ── send interlock (fail-closed) ──
+    FSDState st;
+    memset(&st, 0, sizeof(st));
+    st.op_mode = OpMode_ListenOnly;
+    CHECK(fsd_profile_tx_allowed(&st, 1000) == false, "tx blocked in Listen-Only");
+    st.op_mode = OpMode_Active;
+    CHECK(fsd_profile_tx_allowed(&st, 1000) == false, "tx blocked: no speed seen (fail-closed)");
+    st.speed_seen = true;
+    st.last_speed_tick_ms = 1000;
+    st.vehicle_speed_kph = 0.0f;
+    CHECK(fsd_profile_tx_allowed(&st, 1500) == true, "tx allowed: active + fresh + stationary");
+    CHECK(fsd_profile_tx_allowed(&st, 3000) == false, "tx blocked: stale speed frame");
+    st.vehicle_speed_kph = 5.0f;
+    CHECK(fsd_profile_tx_allowed(&st, 1200) == false, "tx blocked: car moving");
+    st.vehicle_speed_kph = 0.0f;
+    st.op_mode = OpMode_Service;
+    st.last_speed_tick_ms = 1200;
+    CHECK(fsd_profile_tx_allowed(&st, 1300) == true, "tx allowed in Service when stationary");
+}
+
 // ── state init ────────────────────────────────────────────────────────────────
 static void test_state_init(void) {
     FSDState s;
@@ -923,6 +986,7 @@ int main(void) {
     test_misc_parsers();
     test_readonly_parsers();
     test_extras_and_builders();
+    test_profile();
     test_state_init();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);

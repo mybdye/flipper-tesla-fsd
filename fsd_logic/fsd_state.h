@@ -55,6 +55,7 @@ typedef struct FSDState {
     float torsion_bar_torque_nm; // from 0x370 EPAS3S_torsionBarTorque
     bool driver_brake_applied;   // from 0x145 ESP_driverBrakeApply
     bool speed_seen;             // true once we've parsed at least one 0x257
+    uint32_t last_speed_tick_ms; // ms clock when the last 0x257 was seen (TX interlock freshness)
 
     // --- AP-first mode (2026.14.x compatibility) ---
     bool ap_first;               // delay 0x3FD injection until AP is engaged
