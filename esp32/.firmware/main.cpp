@@ -1149,7 +1149,7 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
         CanFrame echo;
         state_enter();
         fsd_handle_epas_status(&g_state, &frame);
-        bool fired = (tx && ap_ok) ? fsd_handle_nag_killer(&g_state, &frame, &echo) : false;
+        bool fired = (tx && ap_ok) ? fsd_handle_nag_killer(&g_state, &frame, &echo, millis()) : false;
         state_exit();
         if (fired) {
             uint8_t lvl     = (frame.data[4] >> 6) & 0x03;
