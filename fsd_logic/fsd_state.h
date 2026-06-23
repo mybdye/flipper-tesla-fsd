@@ -78,6 +78,14 @@ typedef struct FSDState {
     uint8_t das_ap_state;        // DAS_autopilotState: 0=UNAVAIL 1=AVAIL 2=ACTIVE_NOMINAL 3+=active
     uint32_t ap_unstable_tick_ms;// ms clock when das_ap_state was last < 2 (AP-first stability debounce)
 
+    // --- Soft Engage (steer-jerk mitigation, #108) ---
+    // Hold the activation-edge injection until the wheel is near-centred, so the
+    // DAS's steering-path recompute at FSD-enable is small (the jerk is worse on
+    // curves = bigger path delta). Latches once per engagement; resets when AP
+    // drops. Needs 0x129 SCCM_steeringAngle on the tapped bus to be effective.
+    bool soft_engage;            // opt-in toggle
+    bool soft_engage_latched;    // true once activation has begun this engagement
+
     // --- Scroll-Press AP Engage (0x3C2 VCLEFT_switchStatus, HW4-only, Service mode) ---
     bool scroll_press_ap;            // user toggle
     uint8_t scroll_press_state;      // 0=idle/armed-track, 1=press1, 2=scroll1, 3=press2, 4=scroll-final, 5=cooldown
