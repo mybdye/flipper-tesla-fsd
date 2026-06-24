@@ -1,4 +1,4 @@
-## Unreleased — merged since 2.16-beta.9
+## 2.16-beta.10 — Soft Engage (steer-jerk) + EPAS-faithful handsOnLevel fix (testing build)
 
 - **EPAS-faithful: stop setting handsOnLevel (#122).** Torque-model analysis of ground-truth-labelled HW3 14.6 captures (@LonelyCheese09, @jim608) + the HW4 Feifan dump shows real EPAS keeps `0x370` handsOnLevel (byte4[7:6]) at **0 even when hands are genuinely on** (clean-nag 142/142 = 0). The nag escalation lives in `0x399`/`0x39B` `das_hands_on_state` (ladder 1→…→7), not handsOnLevel. So Mode-C deriving handsOnLevel from torque was non-EPAS-like and a likely 14.x preflight tell (explains why it made @ssw0209-sys's car worse). EPAS-faithful now leaves handsOnLevel untouched; it still does the demand-state torque. (Legacy killer's handsOnLevel-flip is unchanged — it works pre-14.x.)
 
