@@ -1043,6 +1043,11 @@ static void update_led() {
 static void process_frame(CanBusId bus, const CanFrame &frame) {
     state_enter();
     g_state.rx_count++;
+    // Configurable signal mapping (#122): when set, read DAS/steering from the
+    // user-configured positions and disable the auto-parsers for those signals.
+    fsd_apply_signal_config(&g_state, &frame, millis());
+    bool das_cfg   = (g_state.cfg_das_id != 0);
+    bool steer_cfg = (g_state.cfg_steer_id != 0);
     // AP-First stability debounce: stamp the last time AP was not engaged, so
     // fsd_ap_first_allows() can require AP held stable for AP_FIRST_STABLE_MS (#100/#108).
     if (g_state.das_ap_state < 2u) {
@@ -1111,14 +1116,15 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     if (frame.id == CAN_ID_BMS_THERMAL) { state_enter(); fsd_handle_bms_thermal(&g_state, &frame); state_exit(); return; }
 
     // ── DAS status (read-only, always) — gating for NAG killer ───────────────
+    // Skipped when a custom DAS source is configured (#122) — config owns it.
     FSDState das_state = state_snapshot();
-    if (hw_uses_hw3_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW3) {
+    if (!das_cfg && hw_uses_hw3_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW3) {
         state_enter();
         fsd_handle_das_status_hw3(&g_state, &frame);
         state_exit();
         return;
     }
-    if (hw_uses_hw4_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW4) {
+    if (!das_cfg && hw_uses_hw4_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW4) {
         state_enter();
         fsd_handle_das_status_hw4(&g_state, &frame);
         state_exit();
@@ -1127,7 +1133,7 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     // HW4 trims that never broadcast 0x39B carry the hands-on field on 0x399
     // (same byte5[5:2]); read it as a fallback so the nag gate isn't starved (#100).
     // Read-only and non-returning — the ISA chime-suppress path still handles 0x399.
-    if (hw_uses_hw4_das_status(das_state.hw_version) &&
+    if (!das_cfg && hw_uses_hw4_das_status(das_state.hw_version) &&
         frame.id == CAN_ID_DAS_STATUS_HW3 && !das_state.das_hw4_status_seen) {
         state_enter();
         fsd_handle_das_handsonly_399(&g_state, &frame);
@@ -1199,7 +1205,7 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
         return;
     }
     // Steering angle (0x129) — read-only, feeds the Soft Engage gate (#108).
-    if (frame.id == CAN_ID_STEER_ANGLE) {
+    if (!steer_cfg && frame.id == CAN_ID_STEER_ANGLE) {
         state_enter();
         fsd_handle_steering_angle(&g_state, &frame);
         state_exit();

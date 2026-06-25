@@ -54,6 +54,15 @@ bool fsd_ap_first_allows(const FSDState *state, uint32_t now_ms);
 // to trigger FSD disengagements during turns (#122).
 #define NAG_TORQUE_RAW_MAX 2230
 #define NAG_TORQUE_RAW_MIN 1870
+// Configurable signal-mapping context freshness window (#122).
+#define NAG_CTX_FRESH_MS 1000u
+
+/** Apply configurable signal mapping (#122): extract DAS/steering from the
+ *  user-configured positions when cfg_*_id is set, and stamp the freshness clock. */
+void fsd_apply_signal_config(FSDState *state, const CanFrame *frame, uint32_t now_ms);
+/** True if the DAS context is fresh (auto mode always true; configured requires
+ *  a cfg-DAS frame within NAG_CTX_FRESH_MS). */
+bool fsd_das_ctx_fresh(const FSDState *state, uint32_t now_ms);
 
 /** Soft-Engage gate (steer-jerk mitigation, #108). Returns true if injection may
  *  proceed: soft_engage off, already latched, or wheel within SOFT_ENGAGE_ANGLE_DEG

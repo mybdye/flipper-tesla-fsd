@@ -95,6 +95,21 @@ bool fsd_handle_isa_speed_chime(CANFRAME* frame);
 #define NAG_TORQUE_RAW_MAX 2230
 #define NAG_TORQUE_RAW_MIN 1870
 
+// Configurable signal-mapping context freshness (#122): when a custom DAS source
+// is set, the nag killer refuses to inject if that frame hasn't been seen within
+// this window — so a wrong/absent mapping fails to a clean no-op, not misbehaviour.
+#define NAG_CTX_FRESH_MS 1000u
+
+/** Apply the configurable signal mapping (#122): if cfg_das_id / cfg_steer_id are
+ *  set and this frame matches, extract das_ap_state / das_hands_on_state /
+ *  steering_angle_deg from the configured positions and stamp the freshness clock.
+ *  No-op when the corresponding id is 0 (auto mode). Call from the RX path. */
+void fsd_apply_signal_config(FSDState* state, const CANFRAME* frame, uint32_t now_ms);
+
+/** True if the DAS context is fresh enough to inject: always true in auto mode
+ *  (cfg_das_id == 0), else requires a cfg-DAS frame within NAG_CTX_FRESH_MS. */
+bool fsd_das_ctx_fresh(const FSDState* state, uint32_t now_ms);
+
 /** Handle CAN ID 0x370 - EPAS nag killer (counter+1 echo).
  *  Builds a new frame in out_frame. Returns true if should be sent.
  *  now_ms is a millisecond clock used by the EPAS-faithful (Mode-C) path's

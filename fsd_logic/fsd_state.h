@@ -95,6 +95,24 @@ typedef struct FSDState {
     bool scroll_press_armed;         // true once das_ap_state==0 observed (required before each fire)
     uint32_t scroll_press_phase_ms;  // now_ms at the start of the current phase (timing reference)
 
+    // --- Configurable nag-context signal mapping (#122) ---
+    // When cfg_das_id != 0, the RX path reads DAS_autopilotState + handsOnState
+    // from these positions instead of the auto-detected parser — lets users with
+    // non-standard 0x39B/0x399 layouts (per-car variants, e.g. byte0 vs byte1)
+    // point the killer at the right bytes without per-car firmware fallbacks.
+    uint16_t cfg_das_id;          // DAS frame id (0 = auto-detect)
+    uint8_t  cfg_apstate_byte;    // DAS_autopilotState position
+    uint8_t  cfg_apstate_shift;
+    uint8_t  cfg_apstate_mask;
+    uint8_t  cfg_handson_byte;    // DAS_handsOnState position (same frame)
+    uint8_t  cfg_handson_shift;
+    uint8_t  cfg_handson_mask;
+    uint16_t cfg_steer_id;        // steering frame id (0 = auto, default 0x129)
+    uint8_t  cfg_steer_hi;        // steering angle byte high / low (signed LE, *0.1)
+    uint8_t  cfg_steer_lo;
+    uint32_t das_ctx_seen_ms;     // last cfg-DAS update (freshness gate)
+    uint32_t steer_ctx_seen_ms;   // last cfg-steering update
+
     // --- DAS state (from 0x39B / 0x389 — Party CAN, read-only) ---
     uint8_t das_hands_on_state;  // 0-15 (4-bit nag level from DAS, more precise than EPAS 2-bit)
     uint8_t das_prev_hands_on_state; // last das_hands_on_state, for the nag escalation edge (#100)

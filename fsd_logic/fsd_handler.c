@@ -1088,6 +1088,32 @@ static bool nag_faithful_modec(FSDState* state, const CANFRAME* frame,
     return true;
 }
 
+void fsd_apply_signal_config(FSDState* state, const CANFRAME* frame, uint32_t now_ms) {
+    if(state->cfg_das_id != 0 && frame->canId == state->cfg_das_id) {
+        if(state->cfg_apstate_byte < 8 && frame->data_lenght > state->cfg_apstate_byte)
+            state->das_ap_state = (frame->buffer[state->cfg_apstate_byte] >>
+                                   state->cfg_apstate_shift) & state->cfg_apstate_mask;
+        if(state->cfg_handson_byte < 8 && frame->data_lenght > state->cfg_handson_byte)
+            state->das_hands_on_state = (frame->buffer[state->cfg_handson_byte] >>
+                                         state->cfg_handson_shift) & state->cfg_handson_mask;
+        state->das_ctx_seen_ms = now_ms;
+    }
+    if(state->cfg_steer_id != 0 && frame->canId == state->cfg_steer_id) {
+        if(state->cfg_steer_hi < 8 && state->cfg_steer_lo < 8 &&
+           frame->data_lenght > state->cfg_steer_hi && frame->data_lenght > state->cfg_steer_lo) {
+            int16_t raw = (int16_t)(((uint16_t)frame->buffer[state->cfg_steer_hi] << 8) |
+                                    frame->buffer[state->cfg_steer_lo]);
+            state->steering_angle_deg = (float)raw * 0.1f;
+            state->steer_ctx_seen_ms = now_ms;
+        }
+    }
+}
+
+bool fsd_das_ctx_fresh(const FSDState* state, uint32_t now_ms) {
+    if(state->cfg_das_id == 0) return true;   // auto mode — prior behaviour
+    return (now_ms - state->das_ctx_seen_ms) <= NAG_CTX_FRESH_MS;
+}
+
 // Burst/pause window: true while we should be RESTING (skip the echo). #122.
 static bool nag_in_pause(uint32_t now_ms) {
     uint32_t cycle = NAG_BURST_MS + NAG_PAUSE_MS;
@@ -1098,6 +1124,8 @@ bool fsd_handle_nag_killer(FSDState* state, const CANFRAME* frame, CANFRAME* out
                            uint32_t now_ms) {
     if(frame->data_lenght < 8) return false;
     if(!state->nag_killer) return false;
+    // Freshness: with a custom DAS source configured, no-op if it's stale (#122).
+    if(!fsd_das_ctx_fresh(state, now_ms)) return false;
     // Burst/pause: during the rest window, don't echo at all (gates both paths).
     if(state->nag_burst && nag_in_pause(now_ms)) return false;
 
