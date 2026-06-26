@@ -61,6 +61,7 @@ jobs:
       matrix:
         env:
           - m5stack-atom
+          - m5stack-atom-matrix
           - m5stack-atom-swap-pins
           - esp32-mcp2515
           - esp32-lilygo
