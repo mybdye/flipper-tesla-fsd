@@ -89,6 +89,17 @@ typedef struct FSDState {
     bool soft_engage;            // opt-in toggle
     bool soft_engage_latched;    // true once activation has begun this engagement
 
+    // --- Abort Guard (steer-jerk mitigation, #108) ---
+    // On some cars the DAS engages then ABORTS within ~0.5s (DAS_autopilotState
+    // 8/9), and that abort snaps the wheel — the steer-jerk. Root-caused from
+    // dunckencn's logs: injected 0x3EE is byte-identical in jerk vs clean runs;
+    // only the jerk runs reach the abort states. When on, cut all activation
+    // injection the instant the car enters an abort state and latch off until a
+    // clean disengage (das_ap_state < 2), so we never feed/repeat an in-progress
+    // abort. Off by default; experimental, needs on-car validation.
+    bool abort_guard;            // opt-in toggle
+    bool abort_guard_latched;    // true once an abort was seen this engagement
+
     // --- Scroll-Press AP Engage (0x3C2 VCLEFT_switchStatus, HW4-only, Service mode) ---
     bool scroll_press_ap;            // user toggle
     uint8_t scroll_press_state;      // 0=idle/armed-track, 1=press1, 2=scroll1, 3=press2, 4=scroll-final, 5=cooldown

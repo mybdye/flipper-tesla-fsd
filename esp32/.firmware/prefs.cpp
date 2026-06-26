@@ -17,6 +17,7 @@ void prefs_load(FSDState *state) {
     state->nag_epas_faithful        = g_prefs.getBool("nagf",   false);
     state->soft_engage              = g_prefs.getBool("soft",   false);
     state->nag_burst                = g_prefs.getBool("nagb",   false);
+    state->abort_guard              = g_prefs.getBool("abortg", false);
     state->suppress_speed_chime     = g_prefs.getBool("chime",  true);
     state->ignore_ota               = g_prefs.getBool("ignota", false);
     state->fsd_unlock               = g_prefs.getBool("unlock", false);
@@ -79,6 +80,7 @@ void prefs_save(const FSDState *state) {
     g_prefs.putBool("nagf",   state->nag_epas_faithful);
     g_prefs.putBool("soft",   state->soft_engage);
     g_prefs.putBool("nagb",   state->nag_burst);
+    g_prefs.putBool("abortg", state->abort_guard);
     g_prefs.putBool("chime",  state->suppress_speed_chime);
     g_prefs.putBool("ignota", state->ignore_ota);
     g_prefs.putBool("unlock", state->fsd_unlock);

@@ -437,6 +437,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <label class="sw"><input type="checkbox" id="swNagB" onchange="cmd('nag_burst',this.checked)"><span class="sl2"></span></label>
   </div>
   <div class="row">
+    <span class="lbl">Abort Guard (14.x, exp.)</span>
+    <label class="sw"><input type="checkbox" id="swAbrt" onchange="cmd('abort_guard',this.checked)"><span class="sl2"></span></label>
+  </div>
+  <div class="row">
     <span class="lbl">BMS Display</span>
     <label class="sw"><input type="checkbox" id="swBms" onchange="cmd('bms',this.checked)"><span class="sl2"></span></label>
   </div>
@@ -757,6 +761,7 @@ function upd(d){
   if(document.getElementById('swNagF')) document.getElementById('swNagF').checked=d.nag_faithful;
   if(document.getElementById('swSoft')) document.getElementById('swSoft').checked=d.soft_engage;
   if(document.getElementById('swNagB')) document.getElementById('swNagB').checked=d.nag_burst;
+  if(document.getElementById('swAbrt')) document.getElementById('swAbrt').checked=d.abort_guard;
   if(d.cfg_das_id!==undefined) setSig(d);
   if(document.getElementById('swBms')) document.getElementById('swBms').checked=d.bms_output;
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
@@ -1288,6 +1293,7 @@ static String build_json() {
     j += "\"nag_faithful\":";  j += state.nag_epas_faithful             ? "true" : "false"; j += ',';
     j += "\"soft_engage\":";   j += state.soft_engage                  ? "true" : "false"; j += ',';
     j += "\"nag_burst\":";     j += state.nag_burst                    ? "true" : "false"; j += ',';
+    j += "\"abort_guard\":";   j += state.abort_guard                  ? "true" : "false"; j += ',';
     j += "\"cfg_das_id\":";    j += state.cfg_das_id;       j += ',';
     j += "\"cfg_apb\":";       j += state.cfg_apstate_byte;  j += ',';
     j += "\"cfg_aps\":";       j += state.cfg_apstate_shift; j += ',';
@@ -1474,6 +1480,19 @@ static void ws_event(uint8_t num, WStype_t type,
             saved = *g_state;
             state_exit();
             Serial.printf("[Web] Nag Burst: %s\n", enabled ? "ON" : "OFF");
+            prefs_save(&saved);
+        }
+    } else if (strstr(buf, "\"abort_guard\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            bool enabled = (strncmp(vptr, "true", 4) == 0);
+            FSDState saved;
+            state_enter();
+            g_state->abort_guard = enabled;
+            if (!enabled) g_state->abort_guard_latched = false;
+            saved = *g_state;
+            state_exit();
+            Serial.printf("[Web] Abort Guard: %s\n", enabled ? "ON" : "OFF");
             prefs_save(&saved);
         }
     } else if (strstr(buf, "\"sig_cfg\"")) {

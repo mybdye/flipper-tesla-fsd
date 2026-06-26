@@ -1054,6 +1054,7 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
         g_state.ap_unstable_tick_ms = millis();
         g_state.soft_engage_latched = false;  // re-require centred wheel next engage (#108)
     }
+    fsd_abort_guard_update(&g_state);  // latch off injection if the car aborts (#108)
     if (frame.id == CAN_ID_GTW_CAR_STATE)  g_state.seen_gtw_car_state++;
     if (frame.id == CAN_ID_GTW_CAR_CONFIG) g_state.seen_gtw_car_config++;
     if (frame.id == CAN_ID_AP_CONTROL)     g_state.seen_ap_control++;
@@ -1218,7 +1219,8 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     // AP-First (#100/#108): when enabled, hold AP/FSD/nag injection until AP is
     // engaged and stable. Gates 0x3FD / 0x3EE / 0x370 below; off by default.
     bool ap_ok = fsd_ap_first_allows(&g_state, millis()) &&
-                 fsd_soft_engage_allows(&g_state);  // Soft Engage holds until wheel centred (#108)
+                 fsd_soft_engage_allows(&g_state) &&   // Soft Engage holds until wheel centred (#108)
+                 fsd_abort_guard_allows(&g_state);     // Abort Guard cuts injection on an abort (#108)
     state_exit();
 
     // NAG killer — build echo only when TX is currently allowed.

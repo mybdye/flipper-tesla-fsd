@@ -76,6 +76,20 @@ bool fsd_ap_first_allows(const FSDState* state, uint32_t now_ms);
  *  (soft_engage_latched=false) when AP drops (das_ap_state < 2). */
 bool fsd_soft_engage_allows(FSDState* state);
 
+// Abort Guard (#108): DAS_autopilotState values that mean the car is aborting an
+// engage — the moment linked to the steer-jerk in dunckencn's logs.
+#define DAS_APSTATE_ABORTING 8u
+#define DAS_APSTATE_ABORTED  9u
+
+/** Abort-Guard latch maintenance. Call once per RX frame (after das_ap_state is
+ *  updated). When abort_guard is on: sets abort_guard_latched on an abort state
+ *  (8/9), clears it on a clean disengage (das_ap_state < 2). No-op when off. */
+void fsd_abort_guard_update(FSDState* state);
+
+/** Abort-Guard gate. Returns false (suppress injection) only when abort_guard is
+ *  on AND an abort was latched this engagement; true otherwise. */
+bool fsd_abort_guard_allows(const FSDState* state);
+
 void fsd_handle_follow_distance(FSDState* state, const CANFRAME* frame);
 bool fsd_handle_autopilot_frame(FSDState* state, CANFRAME* frame, uint32_t now_ms);
 

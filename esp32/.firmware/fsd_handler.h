@@ -69,6 +69,19 @@ bool fsd_das_ctx_fresh(const FSDState *state, uint32_t now_ms);
  *  of centre (latches it on). Mutates soft_engage_latched; reset it when AP drops. */
 bool fsd_soft_engage_allows(FSDState *state);
 
+// Abort Guard (#108): DAS_autopilotState values meaning the car is aborting.
+#define DAS_APSTATE_ABORTING 8u
+#define DAS_APSTATE_ABORTED  9u
+
+/** Abort-Guard latch maintenance — call once per RX frame after das_ap_state is
+ *  updated. Sets abort_guard_latched on an abort state (8/9), clears it on a clean
+ *  disengage (das_ap_state < 2). No-op when abort_guard is off. */
+void fsd_abort_guard_update(FSDState *state);
+
+/** Abort-Guard gate. Returns false (suppress injection) only when abort_guard is
+ *  on AND an abort was latched this engagement. */
+bool fsd_abort_guard_allows(const FSDState *state);
+
 /** Parse SCCM_steeringAngleSensor (0x129) -> steering_angle_deg. */
 void fsd_handle_steering_angle(FSDState *state, const CanFrame *frame);
 

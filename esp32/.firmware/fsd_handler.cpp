@@ -610,6 +610,21 @@ bool fsd_soft_engage_allows(FSDState *state) {
     return true;
 }
 
+// Abort Guard (#108) — mirror of the shared fsd_handler.c.
+void fsd_abort_guard_update(FSDState *state) {
+    if (!state->abort_guard) return;
+    if (state->das_ap_state < 2u) {
+        state->abort_guard_latched = false;          // clean disengage re-arms
+    } else if (state->das_ap_state == DAS_APSTATE_ABORTING ||
+               state->das_ap_state == DAS_APSTATE_ABORTED) {
+        state->abort_guard_latched = true;           // abort seen -> suppress injection
+    }
+}
+
+bool fsd_abort_guard_allows(const FSDState *state) {
+    return !(state->abort_guard && state->abort_guard_latched);
+}
+
 // SCCM_steeringAngleSensor (0x129): 16-bit signed LE at byte0-1, factor 0.1 deg.
 void fsd_handle_steering_angle(FSDState *state, const CanFrame *frame) {
     if (frame->dlc < 4) return;

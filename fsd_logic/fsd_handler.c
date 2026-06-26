@@ -163,6 +163,20 @@ bool fsd_soft_engage_allows(FSDState* state) {
     return true;
 }
 
+void fsd_abort_guard_update(FSDState* state) {
+    if(!state->abort_guard) return;
+    if(state->das_ap_state < 2u) {
+        state->abort_guard_latched = false;          // clean disengage re-arms
+    } else if(state->das_ap_state == DAS_APSTATE_ABORTING ||
+              state->das_ap_state == DAS_APSTATE_ABORTED) {
+        state->abort_guard_latched = true;           // abort seen -> suppress injection
+    }
+}
+
+bool fsd_abort_guard_allows(const FSDState* state) {
+    return !(state->abort_guard && state->abort_guard_latched);
+}
+
 bool fsd_handle_autopilot_frame(FSDState* state, CANFRAME* frame, uint32_t now_ms) {
     if(frame->data_lenght < 8) return false;
 
@@ -173,6 +187,9 @@ bool fsd_handle_autopilot_frame(FSDState* state, CANFRAME* frame, uint32_t now_m
     // Soft Engage: additionally hold the first activation until the wheel is
     // centred, so FSD-enable's path recompute doesn't yank the steering (#108).
     if(!fsd_soft_engage_allows(state)) return false;
+    // Abort Guard: once the car has entered an abort state this engagement, stop
+    // injecting so we don't feed/repeat the abort that snaps the wheel (#108).
+    if(!fsd_abort_guard_allows(state)) return false;
 
     uint8_t mux = fsd_read_mux_id(frame);
     bool fsd_ui = fsd_is_selected_in_ui(frame, state->force_fsd);
@@ -279,6 +296,8 @@ bool fsd_handle_legacy_autopilot(FSDState* state, CANFRAME* frame, uint32_t now_
     if(!fsd_ap_first_allows(state, now_ms)) return false;
     // Soft Engage: also hold the legacy activation until the wheel is centred (#108).
     if(!fsd_soft_engage_allows(state)) return false;
+    // Abort Guard: stop injecting once an abort was seen this engagement (#108).
+    if(!fsd_abort_guard_allows(state)) return false;
 
     uint8_t mux = fsd_read_mux_id(frame);
     bool fsd_ui = fsd_is_selected_in_ui(frame, state->force_fsd);

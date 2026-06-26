@@ -519,6 +519,51 @@ static void test_signal_config(void) {
     CHECK(fsd_handle_nag_killer(&n, &in, &out, 3000u) == false, "cfg stale -> nag no-ops");
 }
 
+// ── Abort Guard (steer-jerk, #108) ───────────────────────────────────────────
+static void test_abort_guard(void) {
+    FSDState s;
+    memset(&s, 0, sizeof(s));
+
+    // Off by default: gate always allows, update never latches.
+    s.das_ap_state = DAS_APSTATE_ABORTING;
+    fsd_abort_guard_update(&s);
+    CHECK(s.abort_guard_latched == false, "abort_guard off: no latch");
+    CHECK(fsd_abort_guard_allows(&s) == true, "abort_guard off: always allows");
+
+    // On + AP active (not an abort state): no latch, still allows.
+    s.abort_guard = true;
+    s.das_ap_state = 6;  // ACTIVE
+    fsd_abort_guard_update(&s);
+    CHECK(fsd_abort_guard_allows(&s) == true, "active state: injection allowed");
+
+    // Car enters ABORTING -> latch -> suppress.
+    s.das_ap_state = DAS_APSTATE_ABORTING;
+    fsd_abort_guard_update(&s);
+    CHECK(s.abort_guard_latched == true, "abort seen: latched");
+    CHECK(fsd_abort_guard_allows(&s) == false, "abort latched: injection suppressed");
+
+    // Still suppressed once the state moves to ABORTED, and even back to active —
+    // the latch holds for the rest of the engagement.
+    s.das_ap_state = DAS_APSTATE_ABORTED; fsd_abort_guard_update(&s);
+    CHECK(fsd_abort_guard_allows(&s) == false, "aborted: still suppressed");
+    s.das_ap_state = 6; fsd_abort_guard_update(&s);
+    CHECK(fsd_abort_guard_allows(&s) == false, "re-active mid-cycle: stays suppressed");
+
+    // Clean disengage (das_ap_state < 2) clears the latch -> re-armed.
+    s.das_ap_state = 1; fsd_abort_guard_update(&s);
+    CHECK(s.abort_guard_latched == false, "clean disengage: latch cleared");
+    CHECK(fsd_abort_guard_allows(&s) == true, "re-armed: allows again");
+
+    // The legacy autopilot handler honours the gate: latched -> no modification.
+    FSDState h;
+    memset(&h, 0, sizeof(h));
+    h.abort_guard = true; h.abort_guard_latched = true;
+    h.hw_version = TeslaHW_Legacy; h.force_fsd = true;
+    CANFRAME f; zero(&f); f.canId = 0x3EE; f.data_lenght = 8;
+    CHECK(fsd_handle_legacy_autopilot(&h, &f, 5000u) == false,
+          "legacy autopilot suppressed while abort latched");
+}
+
 // ── nag burst/pause + ±1.8 Nm torque cap (#122) ──────────────────────────────
 static void test_nag_burst_cap(void) {
     FSDState s;
@@ -1346,6 +1391,7 @@ int main(void) {
     test_nag_killer_faithful();
     test_nag_burst_cap();
     test_signal_config();
+    test_abort_guard();
     test_can_ops();
     test_additive_checksum();
     test_candump_format();
