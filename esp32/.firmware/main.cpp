@@ -28,6 +28,7 @@
 #include "can_dump.h"
 #include "http_can_stream.h"
 #include "blackbox.h"
+#include "capability.h"
 #include "../../fsd_logic/fsd_events.h"
 #include "prefs.h"
 #if defined(BOARD_TTGO_DISPLAY)
@@ -1078,6 +1079,10 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     blackbox_record(bus, frame, now);
     if (bb_evt == EVT_ABORT) blackbox_arm(BB_TRIG_ABORT, &bb_snap, now);
 
+    // Tap capability checker (#125): count capability-relevant ids per bus during
+    // an active listen window. Pure RX — no-op when no check is running.
+    capability_record(bus, frame, now);
+
     can_dump_record(bus, frame);
     // Record to the web stream in BOTH modes so a capture can run *through* an
     // Activate (needed to catch the steer-jerk transient, #108). Recording is a
@@ -1487,6 +1492,7 @@ void setup() {
 
     can_dump_init();
     blackbox_init(&g_state, &g_state_mux);  // ring + storage (after SD is mounted)
+    capability_init(&g_state, &g_state_mux);  // tap capability checker (#125)
 
 #if defined(BOARD_LILYGO)
     {
@@ -1673,6 +1679,7 @@ void loop() {
 
     can_dump_tick(now);
     blackbox_tick(now);  // post-roll countdown + flush (#124)
+    capability_tick(now);  // finalize the capability listen window (#125)
 
 #if defined(BOARD_LILYGO)
     sleep_tick(now);

@@ -20,6 +20,7 @@
 
 #include "fsd_can_ops.h"
 #include "fsd_blackbox_summary.h"
+#include "fsd_capability.h"
 #include "fsd_capture.h"
 #include "fsd_checksum.h"
 #include "fsd_events.h"
@@ -640,6 +641,115 @@ static void test_fsd_events(void) {
     CHECK(fsd_events_inject(&s, EVT_ABORT, 999999u) == EVT_NONE, "inject rejects EVT_ABORT");
     CHECK(fsd_events_inject(&s, EVT_DISENGAGE, 999999u) == EVT_NONE, "inject rejects EVT_DISENGAGE");
     CHECK(fsd_events_inject(&s, EVT_NONE, 999999u) == EVT_NONE, "inject rejects EVT_NONE");
+}
+
+// ── tap capability verdicts (#125) ───────────────────────────────────────────
+static void test_capability(void) {
+    // A "full Party-like" tap: 0x370 + HW4 DAS (0x39B) + AP control + steer.
+    // Everything works.
+    FSDCapSeen full = {0};
+    full.epas = true; full.das_hw4 = true; full.ap_control = true; full.steer = true;
+    FSDCapReport r = fsd_capability_eval(full, TeslaHW_HW4);
+    CHECK(r.nag_killer == CAP_OK, "full tap: nag killer OK (%d)", r.nag_killer);
+    CHECK(r.ap_first == CAP_OK, "full tap: AP-First OK");
+    CHECK(r.fsd_activation == CAP_OK, "full tap: FSD activation OK");
+    CHECK(r.soft_engage == CAP_OK, "full tap: soft engage OK");
+    CHECK(r.bus_hint == CAP_HINT_PARTY, "full tap: hint Party-like");
+    CHECK(!r.hw_unconfirmed, "full tap: HW known");
+
+    // ── THE 0x399 TRAP ──
+    // HW4 with 0x399 ONLY (the ISA speed chime, NOT DAS state) + 0x370.
+    // DAS state must read as MISSING -> nag killer degrades to dual-CAN, and
+    // AP-First is impossible.
+    FSDCapSeen hw4_isa = {0};
+    hw4_isa.epas = true; hw4_isa.das_hw3 = true;  // 0x399 seen, but it's the chime
+    r = fsd_capability_eval(hw4_isa, TeslaHW_HW4);
+    CHECK(!r.has_das, "0x399 on HW4 is the chime, not DAS state");
+    CHECK(r.nag_killer == CAP_DUAL_CAN, "HW4 0x399-only: nag killer dual-CAN (%d)", r.nag_killer);
+    CHECK(r.ap_first == CAP_MISSING, "HW4 0x399-only: AP-First missing");
+
+    // HW3 with 0x399 (here it IS the DAS state) + 0x370 -> everything gates.
+    FSDCapSeen hw3_das = {0};
+    hw3_das.epas = true; hw3_das.das_hw3 = true;
+    r = fsd_capability_eval(hw3_das, TeslaHW_HW3);
+    CHECK(r.has_das, "0x399 on HW3 is DAS state");
+    CHECK(r.nag_killer == CAP_OK, "HW3 0x399: nag killer OK");
+    CHECK(r.ap_first == CAP_OK, "HW3 0x399: AP-First OK");
+
+    // Legacy with 0x399 also reads as DAS state (only HW4 is the trap).
+    FSDCapSeen legacy_das = {0};
+    legacy_das.epas = true; legacy_das.das_hw3 = true; legacy_das.ap_legacy = true;
+    r = fsd_capability_eval(legacy_das, TeslaHW_Legacy);
+    CHECK(r.has_das, "0x399 on Legacy is DAS state");
+    CHECK(r.nag_killer == CAP_OK, "Legacy 0x399: nag killer OK");
+    CHECK(r.fsd_activation == CAP_OK, "Legacy 0x3EE: FSD activation OK");
+
+    // ── dual-CAN: 0x370 present but NO DAS state anywhere ──
+    FSDCapSeen epas_only = {0};
+    epas_only.epas = true;
+    r = fsd_capability_eval(epas_only, TeslaHW_HW4);
+    CHECK(r.nag_killer == CAP_DUAL_CAN, "0x370 without DAS: dual-CAN recommended");
+    CHECK(r.ap_first == CAP_MISSING, "0x370 without DAS: AP-First missing");
+
+    // ── wrong bus for the nag killer: no 0x370 to echo ──
+    FSDCapSeen no_epas = {0};
+    no_epas.das_hw4 = true;  // DAS state here, but no 0x370
+    r = fsd_capability_eval(no_epas, TeslaHW_HW4);
+    CHECK(r.nag_killer == CAP_MISSING, "no 0x370: nag killer missing (wrong bus)");
+    CHECK(r.ap_first == CAP_OK, "DAS present: AP-First still OK");
+
+    // ── FSD activation: either 0x3FD or 0x3EE satisfies it ──
+    FSDCapSeen legacy_ap = {0};
+    legacy_ap.ap_legacy = true;
+    CHECK(fsd_capability_eval(legacy_ap, TeslaHW_Legacy).fsd_activation == CAP_OK,
+          "0x3EE alone: FSD activation OK");
+    FSDCapSeen empty = {0};
+    CHECK(fsd_capability_eval(empty, TeslaHW_HW3).fsd_activation == CAP_MISSING,
+          "no AP frame: FSD activation missing");
+
+    // ── soft engage degrades to AP-First-only without 0x129 ──
+    CHECK(fsd_capability_eval(hw3_das, TeslaHW_HW3).soft_engage == CAP_MISSING,
+          "no 0x129: soft engage degrades (missing)");
+
+    // ── HW unknown inference ──
+    // 0x39B seen -> infer HW4 (so a lone 0x399 would be treated as chime).
+    FSDCapSeen unk_hw4 = {0};
+    unk_hw4.das_hw4 = true; unk_hw4.das_hw3 = true; unk_hw4.epas = true;
+    r = fsd_capability_eval(unk_hw4, TeslaHW_Unknown);
+    CHECK(r.hw_unconfirmed, "unknown HW: flagged unconfirmed");
+    CHECK(r.hw_effective == TeslaHW_HW4, "0x39B present -> inferred HW4");
+    CHECK(r.has_das, "inferred HW4 still has DAS via 0x39B");
+
+    // Unknown HW, only 0x399 + 0x370: assume HW3/Legacy -> 0x399 IS DAS state,
+    // so the nag killer is reported workable but unconfirmed.
+    FSDCapSeen unk_399 = {0};
+    unk_399.das_hw3 = true; unk_399.epas = true;
+    r = fsd_capability_eval(unk_399, TeslaHW_Unknown);
+    CHECK(r.hw_unconfirmed, "unknown HW w/ 0x399: unconfirmed");
+    CHECK(r.hw_effective == TeslaHW_HW3, "0x399-only unknown -> assume HW3");
+    CHECK(r.has_das, "0x399-only unknown -> treated as DAS state");
+    CHECK(r.nag_killer == CAP_OK, "0x399-only unknown: nag killer OK (unconfirmed)");
+
+    // Unknown HW with 0x3EE -> infer Legacy.
+    FSDCapSeen unk_legacy = {0};
+    unk_legacy.ap_legacy = true; unk_legacy.das_hw3 = true; unk_legacy.epas = true;
+    r = fsd_capability_eval(unk_legacy, TeslaHW_Unknown);
+    CHECK(r.hw_effective == TeslaHW_Legacy, "0x3EE present -> inferred Legacy");
+    CHECK(r.has_das, "inferred Legacy: 0x399 is DAS state");
+
+    // ── bus hint: steering, no 0x370 -> Chassis/Vehicle-like ──
+    FSDCapSeen chassis = {0};
+    chassis.steer = true;
+    r = fsd_capability_eval(chassis, TeslaHW_HW4);
+    CHECK(r.bus_hint == CAP_HINT_CHASSIS, "steer w/o 0x370: hint Chassis-like");
+    CHECK(r.soft_engage == CAP_OK, "0x129 present: soft engage OK");
+
+    // Empty tap -> everything missing, no hint.
+    r = fsd_capability_eval(empty, TeslaHW_HW4);
+    CHECK(r.nag_killer == CAP_MISSING && r.ap_first == CAP_MISSING &&
+          r.fsd_activation == CAP_MISSING && r.soft_engage == CAP_MISSING,
+          "empty tap: all missing");
+    CHECK(r.bus_hint == CAP_HINT_NONE, "empty tap: no hint");
 }
 
 // ── black-box .json summary formatter (#124) ─────────────────────────────────
@@ -1527,6 +1637,7 @@ int main(void) {
     test_signal_config();
     test_abort_guard();
     test_fsd_events();
+    test_capability();
     test_blackbox_summary();
     test_can_ops();
     test_additive_checksum();

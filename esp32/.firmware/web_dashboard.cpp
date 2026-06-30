@@ -13,6 +13,7 @@
 #include "can_dump.h"
 #include "http_can_stream.h"
 #include "blackbox.h"
+#include "capability.h"
 #include "prefs.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
@@ -511,6 +512,18 @@ R"rawliteral(
 </details>
 </div>
 
+<!-- Tap capability checker (#125) -->
+<div class="card">
+  <div class="card-head"><div class="icon ic-d">T</div><h2>Tap Check</h2>
+    <span id="capSt" class="pill off" style="margin-left:auto"><span class="pd"></span>Idle</span></div>
+  <div class="log-info" style="margin-bottom:8px">
+    Listens a few seconds and reports whether each feature can work on the bus this
+    device is tapped into. Pure read-only &mdash; nothing is transmitted.
+  </div>
+  <div id="capBody"></div>
+  <button id="capBtn" type="button" class="btn-main btn-blue" onclick="cmd('capability_recheck',true)" style="margin-top:8px">RE-CHECK</button>
+</div>
+
 <!-- Black-box incident recorder (#124) -->
 <div class="card">
   <div class="card-head"><div class="icon ic-d">R</div><h2>Black-box</h2>
@@ -779,6 +792,54 @@ function bbRefreshList(){
 }
 function bbDelete(n){cmd('blackbox_delete',n);setTimeout(bbRefreshList,400);}
 function bbDeleteAll(){if(confirm('Delete all recorded events from the device?')){cmd('blackbox_delete_all',true);bbSeen();setTimeout(bbRefreshList,400);}}
+// ── Tap capability checker (#125) ──
+var CAP_MSG={
+  nag_killer:['0x370 + DAS state present — gates correctly',
+              '0x370 here but no DAS state — dual-CAN recommended (read DAS on a second tap)',
+              'no 0x370 on this tap — wrong bus for the nag killer'],
+  ap_first:['DAS state readable',
+            'dual-CAN',
+            'no DAS state here (need 0x399/0x39B)'],
+  fsd_activation:['AP control frame present (0x3FD/0x3EE)',
+                  '',
+                  'no AP control frame to modify here'],
+  soft_engage:['0x129 steering angle present',
+               '',
+               'no 0x129 — degrades to AP-First-only']};
+function capRow(name,key,v){
+  var col=v===0?'var(--accent)':v===1?'var(--yellow)':'var(--red)';
+  var sym=v===0?'✓':v===1?'⚠':'✗';
+  var msg=(CAP_MSG[key]||['','',''])[v]||'';
+  return '<div style="display:flex;gap:8px;padding:5px 0;border-top:1px solid var(--border)">'
+    +'<span style="color:'+col+';font-weight:700;flex:0 0 14px">'+sym+'</span>'
+    +'<span style="flex:0 0 92px;font-size:.8em;color:var(--text)">'+name+'</span>'
+    +'<span style="font-size:.73em;color:var(--text3);line-height:1.3">'+msg+'</span></div>';
+}
+function capSync(d){
+  var c=d.capability;if(!c)return;
+  pill('capSt',c.state===2,c.state===1?'Listening…':(c.state===2?'Done':'Idle'));
+  var btn=document.getElementById('capBtn');if(btn)btn.disabled=(c.state===1);
+  var el=document.getElementById('capBody');if(!el)return;
+  if(c.state===0){el.innerHTML='<div style="font-size:.78em;color:var(--text3);padding:6px 0">Connect to run a check, or press Re-check.</div>';return;}
+  if(c.state===1){el.innerHTML='<div style="font-size:.8em;color:var(--text2);padding:6px 0">Listening on the bus… '+Math.ceil((c.ms_left||0)/1000)+'s</div>';return;}
+  var buses=c.buses||[];
+  if(!buses.length){el.innerHTML='<div style="font-size:.8em;color:var(--yellow);padding:6px 0">No frames seen — check wiring / that the car is awake.</div>';return;}
+  var dual=buses.length>1;
+  var h='';
+  buses.forEach(function(b){
+    h+='<div style="margin-top:8px">';
+    if(dual)h+='<div style="font-size:.78em;color:var(--text2);font-weight:600;margin-bottom:2px">'+bbEsc(b.bus)+' &middot; '+(b.frames||0)+' frames</div>';
+    h+=capRow('Nag killer','nag_killer',b.nag_killer);
+    h+=capRow('AP-First','ap_first',b.ap_first);
+    h+=capRow('FSD activate','fsd_activation',b.fsd_activation);
+    h+=capRow('Soft Engage','soft_engage',b.soft_engage);
+    var hint=b.hint?('Best guess: '+bbEsc(b.hint)+' — confirm in Service Mode → CAN Port'):'';
+    if(hint)h+='<div style="font-size:.7em;color:var(--text3);padding-top:5px">'+hint+'</div>';
+    if(b.hw_unconfirmed)h+='<div style="font-size:.7em;color:var(--yellow);padding-top:3px">HW unconfirmed — 0x399 reading assumed; verdict may change once HW is detected.</div>';
+    h+='</div>';
+  });
+  el.innerHTML=h;
+}
 function ring(p){
   var b=document.getElementById('socBar');
   b.style.strokeDashoffset=CIRC-(CIRC*Math.min(p,100)/100);
@@ -852,6 +913,7 @@ function upd(d){
 
   updateControlsSummary(d);
   bbSync(d);
+  capSync(d);
   pill('dumpSt',d.can_dump,d.can_dump?'Recording':'Idle');
 
   // CAN stats
@@ -1401,6 +1463,7 @@ static String build_json() {
     j += "\"fw_build\":\"";    j += __DATE__;  j += ' '; j += __TIME__; j += "\",";
     j += "\"can_dump\":";      j += can_dump_active()                 ? "true" : "false"; j += ',';
     j += "\"blackbox\":";      j += blackbox_status_json();            j += ',';
+    j += "\"capability\":";    j += capability_status_json();          j += ',';
     j += "\"sleep_ms\":";     j += state.sleep_idle_ms;               j += ',';
     j += "\"wifi_ssid\":\"";  j += json_escape(state.wifi_ssid);      j += "\",";
     j += "\"wifi_pass\":\"";  j += state.wifi_pass[0] ? "***" : "";  j += "\",";
@@ -1424,6 +1487,10 @@ static void ws_event(uint8_t num, WStype_t type,
                      uint8_t *payload, size_t length)
 {
     if (type == WStype_CONNECTED) {
+        // Auto-run the tap capability check on connect (#125): the first few
+        // seconds answer "will the nag killer work on this tap?" before any
+        // guesswork. Pure RX — counting only.
+        capability_start(millis());
         // Push current state immediately on connect
         String json = build_json();
         g_ws.sendTXT(num, json.c_str(), json.length());
@@ -1613,6 +1680,9 @@ static void ws_event(uint8_t num, WStype_t type,
             Serial.printf("[Web] Black-box: %s\n", enabled ? "ON" : "OFF");
             prefs_save(&saved);
         }
+    } else if (strstr(buf, "\"capability_recheck\"")) {
+        capability_start(millis());                 // re-run the tap check (#125)
+        Serial.println("[Web] Capability: re-check");
     } else if (strstr(buf, "\"blackbox_mark\"")) {
         blackbox_mark(millis());                    // inject EVT_MANUAL + arm
         Serial.println("[Web] Black-box: manual mark");
