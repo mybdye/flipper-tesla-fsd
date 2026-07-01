@@ -77,6 +77,19 @@ static bool require_admin_auth(bool challenge_browser = false) {
     return false;
 }
 
+// Black-box captures hold recorded CAN (VIN, drive data), so gate the download
+// endpoints behind admin auth — but only when an AP password is set. Open setups
+// keep the one-click capture-download workflow; password-protected devices don't
+// leak persistent captures to other hosts on a shared LAN. Softer than
+// require_admin_auth (which hard-blocks when no password is set).
+static bool download_auth_ok() {
+    FSDState s;
+    if (!state_copy(&s) || !ap_has_password(&s)) return true;   // open setup — allow
+    if (g_http.authenticate(OTA_AUTH_USER, s.wifi_pass)) return true;
+    g_http.requestAuthentication(BASIC_AUTH, "Tesla-FSD");
+    return false;
+}
+
 // ── Embedded HTML/CSS/JS ──────────────────────────────────────────────────────
 // Tesla dark theme; mobile-first (max 480 px); WebSocket on :81
 static const char WEB_HTML[] PROGMEM = R"rawliteral(
@@ -1954,11 +1967,13 @@ static void handle_sdformat() {
 
 // ── Black-box (#124) ──────────────────────────────────────────────────────────
 static void handle_blackbox_list() {
+    if (!download_auth_ok()) return;
     g_http.sendHeader("Cache-Control", "no-store");
     g_http.send(200, "application/json", blackbox_list_json());
 }
 
 static void handle_blackbox_get() {
+    if (!download_auth_ok()) return;
     String name = g_http.arg("name");
     bool json = (g_http.arg("type") == "json");
     if (name.length() == 0 || name.length() >= 40) {
