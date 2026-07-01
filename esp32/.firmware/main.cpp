@@ -29,6 +29,7 @@
 #include "http_can_stream.h"
 #include "blackbox.h"
 #include "capability.h"
+#include "profile_match.h"
 #include "../../fsd_logic/fsd_events.h"
 #include "prefs.h"
 #if defined(BOARD_TTGO_DISPLAY)
@@ -1148,7 +1149,12 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     if (!das_cfg && hw_uses_hw4_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW4) {
         state_enter();
         fsd_handle_das_status_hw4(&g_state, &frame);
+        uint8_t ap = g_state.das_ap_state;         // as read by the std parser
+        uint8_t ho = g_state.das_hands_on_state;
         state_exit();
+        // Variant-profile auto-suggest (#126): feed the raw frame + what the std
+        // parser made of it, so a stuck parser can be detected and matched.
+        profile_match_record(frame, ap, ho, now);
         return;
     }
     // HW4 trims that never broadcast 0x39B carry the hands-on field on 0x399
@@ -1493,6 +1499,7 @@ void setup() {
     can_dump_init();
     blackbox_init(&g_state, &g_state_mux);  // ring + storage (after SD is mounted)
     capability_init(&g_state, &g_state_mux);  // tap capability checker (#125)
+    profile_match_init(&g_state, &g_state_mux);  // variant-profile auto-suggest (#126)
 
 #if defined(BOARD_LILYGO)
     {

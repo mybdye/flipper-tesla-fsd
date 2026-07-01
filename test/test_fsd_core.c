@@ -26,6 +26,7 @@
 #include "fsd_events.h"
 #include "fsd_handler.h"
 #include "fsd_profile.h"
+#include "fsd_profile_db.h"
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -750,6 +751,121 @@ static void test_capability(void) {
           r.fsd_activation == CAP_MISSING && r.soft_engage == CAP_MISSING,
           "empty tap: all missing");
     CHECK(r.bus_hint == CAP_HINT_NONE, "empty tap: no hint");
+}
+
+// ── built-in variant profiles + auto-suggest matcher (#126) ────────────────────
+// Helper: build a DAS frame with an 8-byte payload.
+static FSDProfileFrame pf(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3,
+                          uint8_t b4, uint8_t b5, uint8_t b6, uint8_t b7) {
+    FSDProfileFrame f = { { b0, b1, b2, b3, b4, b5, b6, b7 }, 8 };
+    return f;
+}
+
+static void test_profile_db(void) {
+    // Look up the seed rows by identity so the test survives table re-ordering.
+    int i_hw3 = -1, i_hw4 = -1, i_ssw = -1, i_high = -1;
+    for (int i = 0; i < FSD_PROFILE_DB_COUNT; i++) {
+        const FSDProfile* p = &FSD_PROFILE_DB[i];
+        if (p->das_id == 0x399 && p->apstate.byte == 0 && p->apstate.shift == 0) i_hw3 = i;
+        if (p->das_id == 0x39B && p->apstate.byte == 1 && p->apstate.shift == 4) i_hw4 = i;
+        if (p->das_id == 0x39B && p->apstate.byte == 0 && p->apstate.shift == 4) i_ssw = i;
+        if (p->das_id == 0x39B && p->apstate.byte == 0 && p->apstate.shift == 0) i_high = i;
+    }
+    CHECK(i_hw3 >= 0 && i_hw4 >= 0 && i_ssw >= 0 && i_high >= 0, "all 4 seed profiles present");
+    CHECK(FSD_PROFILE_DB[i_ssw].needs_override, "ssw0209 flagged needs_override");
+    CHECK(!FSD_PROFILE_DB[i_hw4].needs_override, "std HW4 not needs_override");
+    CHECK(!FSD_PROFILE_DB[i_high].needs_override, "Highland auto-handled, not needs_override");
+    // handson is byte5/shift2/mask0xF throughout.
+    for (int i = 0; i < FSD_PROFILE_DB_COUNT; i++) {
+        CHECK(FSD_PROFILE_DB[i].handson.byte == 5 && FSD_PROFILE_DB[i].handson.shift == 2 &&
+              FSD_PROFILE_DB[i].handson.mask == 0x0F, "handson byte5/sh2/0xF: %s",
+              FSD_PROFILE_DB[i].name);
+    }
+
+    // ── Standard HW3 (0x399): AP-state in byte0 low nibble sweeps 2->3->4. ──
+    // Only one candidate for 0x399, so a live sweep -> unique match, but it is
+    // auto-handled -> no suggestion.
+    FSDProfileFrame hw3[] = {
+        pf(0x02, 0, 0, 0, 0, 0x00, 0, 0),
+        pf(0x03, 0, 0, 0, 0, 0x04, 0, 0),
+        pf(0x04, 0, 0, 0, 0, 0x08, 0, 0),
+        pf(0x03, 0, 0, 0, 0, 0x04, 0, 0),
+    };
+    FSDMatchResult r = fsd_profile_match(0x399, hw3, 4);
+    CHECK(r.status == FSD_MATCH_ONE && r.index == i_hw3, "std HW3: unique match");
+    CHECK(!fsd_profile_should_suggest(r), "std HW3: no suggestion (auto-handled)");
+
+    // ── Standard HW4 (0x39B): AP-state in byte1 hi nibble sweeps 1->2->3. ──
+    // byte0 is constant 0x00 so neither byte0-hi (ssw0209) nor byte0-lo
+    // (Highland) qualifies -> unique std HW4, auto-handled -> no suggestion.
+    FSDProfileFrame hw4[] = {
+        pf(0x00, 0x10, 0, 0, 0, 0x00, 0, 0),
+        pf(0x00, 0x20, 0, 0, 0, 0x04, 0, 0),
+        pf(0x00, 0x30, 0, 0, 0, 0x08, 0, 0),
+        pf(0x00, 0x20, 0, 0, 0, 0x04, 0, 0),
+    };
+    r = fsd_profile_match(0x39B, hw4, 4);
+    CHECK(r.status == FSD_MATCH_ONE && r.index == i_hw4, "std HW4: unique match");
+    CHECK(!fsd_profile_should_suggest(r), "std HW4: no suggestion (parser is fine)");
+
+    // ── THE REAL GAP: ssw0209 byte0 HI-nibble (0x39B, shift4). ──
+    // AP-state sweeps 1->2->3 in byte0[7:4]. byte1[7:4] is pinned at 1 (the
+    // Highland/ssw signature) so std HW4 reads a constant -> disqualified.
+    // byte0[3:0] is pinned at 1 so Highland's byte0-lo reads a constant ->
+    // disqualified. Only ssw0209 qualifies, and it needs_override -> SUGGEST.
+    FSDProfileFrame ssw[] = {
+        pf(0x11, 0x10, 0, 0, 0, 0x00, 0, 0),  // hi=1 avail, lo=1, byte1 hi=1
+        pf(0x21, 0x10, 0, 0, 0, 0x04, 0, 0),  // hi=2 active
+        pf(0x31, 0x10, 0, 0, 0, 0x08, 0, 0),  // hi=3
+        pf(0x21, 0x10, 0, 0, 0, 0x04, 0, 0),  // hi=2
+    };
+    r = fsd_profile_match(0x39B, ssw, 4);
+    CHECK(r.status == FSD_MATCH_ONE && r.index == i_ssw, "ssw0209 hi-nibble: unique match");
+    CHECK(fsd_profile_should_suggest(r), "ssw0209 hi-nibble: SUGGEST (the real gap)");
+    CHECK(FSD_PROFILE_DB[r.index].apstate.shift == 4, "ssw0209 suggests shift4");
+
+    // ── Ambiguous: byte0 sweeps sensibly in BOTH nibbles -> ssw0209 AND
+    // Highland both qualify -> AMBIGUOUS -> no suggestion (fall back to manual). ──
+    FSDProfileFrame amb[] = {
+        pf(0x12, 0x10, 0, 0, 0, 0x00, 0, 0),  // hi=1,lo=2
+        pf(0x23, 0x10, 0, 0, 0, 0x04, 0, 0),  // hi=2,lo=3
+        pf(0x34, 0x10, 0, 0, 0, 0x08, 0, 0),  // hi=3,lo=4
+        pf(0x23, 0x10, 0, 0, 0, 0x04, 0, 0),
+    };
+    r = fsd_profile_match(0x39B, amb, 4);
+    CHECK(r.status == FSD_MATCH_AMBIGUOUS, "two nibbles live -> ambiguous");
+    CHECK(!fsd_profile_should_suggest(r), "ambiguous -> no suggestion");
+
+    // ── No match: nothing reaches active (parked car), all fields constant 0. ──
+    FSDProfileFrame parked[] = {
+        pf(0x11, 0x11, 0, 0, 0, 0x00, 0, 0),  // every candidate nibble constant 1
+        pf(0x11, 0x11, 0, 0, 0, 0x00, 0, 0),
+        pf(0x11, 0x11, 0, 0, 0, 0x00, 0, 0),
+        pf(0x11, 0x11, 0, 0, 0, 0x00, 0, 0),
+    };
+    r = fsd_profile_match(0x39B, parked, 4);
+    CHECK(r.status == FSD_MATCH_NONE, "constant/never-active -> no match");
+    CHECK(!fsd_profile_should_suggest(r), "no match -> no suggestion");
+
+    // ── No match: unknown DAS id has no candidates. ──
+    r = fsd_profile_match(0x123, ssw, 4);
+    CHECK(r.status == FSD_MATCH_NONE, "unknown das_id -> no candidates -> no match");
+
+    // ── Too few frames: below FSD_PROFILE_MIN_FRAMES -> no decision. ──
+    r = fsd_profile_match(0x39B, ssw, 2);
+    CHECK(r.status == FSD_MATCH_NONE, "too few frames -> no match");
+
+    // ── Out-of-range guard: a nibble that decodes >9 disqualifies that profile.
+    // byte0 hi = 0xA (10) is out of range -> ssw0209 disqualified; std HW4 sweeps
+    // fine -> unique std HW4, no suggestion. Proves the out-of-range rejection. ──
+    FSDProfileFrame oor[] = {
+        pf(0xA1, 0x10, 0, 0, 0, 0x00, 0, 0),  // byte0 hi=0xA (10) invalid
+        pf(0xA1, 0x20, 0, 0, 0, 0x04, 0, 0),
+        pf(0xA1, 0x30, 0, 0, 0, 0x08, 0, 0),
+        pf(0xA1, 0x20, 0, 0, 0, 0x04, 0, 0),
+    };
+    r = fsd_profile_match(0x39B, oor, 4);
+    CHECK(r.status == FSD_MATCH_ONE && r.index == i_hw4, "out-of-range nibble rejected");
 }
 
 // ── black-box .json summary formatter (#124) ─────────────────────────────────
@@ -1638,6 +1754,7 @@ int main(void) {
     test_abort_guard();
     test_fsd_events();
     test_capability();
+    test_profile_db();
     test_blackbox_summary();
     test_can_ops();
     test_additive_checksum();

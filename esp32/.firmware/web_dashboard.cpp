@@ -14,6 +14,7 @@
 #include "http_can_stream.h"
 #include "blackbox.h"
 #include "capability.h"
+#include "profile_match.h"
 #include "prefs.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
@@ -476,6 +477,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <label class="sw"><input type="checkbox" id="swTlssc" onchange="cmd('tlssc_restore',this.checked)"><span class="sl2"></span></label>
   </div>
   <div class="row" style="display:block">
+    <div id="pmSuggest" style="display:none;margin:0 0 8px;padding:8px 10px;border:1px solid var(--accent);border-radius:6px;background:var(--card2)">
+      <div style="font-size:12px;color:var(--text)">Looks like variant <b id="pmName">?</b> &mdash; the standard parser can't read AP-state on this bus.</div>
+      <button type="button" id="pmApply" onclick="pmApply()" style="margin-top:6px;background:var(--accent);color:#000;border:0;padding:6px 12px;border-radius:4px;cursor:pointer">Apply this profile</button>
+    </div>
     <details>
       <summary class="lbl" style="cursor:pointer">Signal Map (advanced, 14.x)</summary>
       <div style="font-size:11px;color:var(--muted);margin:6px 0 8px">Override where the nag killer reads AP-state / hands-on / steering. Leave DAS id <b>0</b> for auto-detect. byte 0-7, shift 0-7, mask hex.</div>
@@ -908,6 +913,7 @@ function upd(d){
   if(document.getElementById('swNagB')) document.getElementById('swNagB').checked=d.nag_burst;
   if(document.getElementById('swAbrt')) document.getElementById('swAbrt').checked=d.abort_guard;
   if(d.cfg_das_id!==undefined) setSig(d);
+  pmSync(d);
   if(document.getElementById('swBms')) document.getElementById('swBms').checked=d.bms_output;
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
   if(document.getElementById('swChina')) document.getElementById('swChina').checked=d.china_mode;
@@ -1149,6 +1155,29 @@ function saveSigCfg(){
 }
 function sv(id,val){ var e=document.getElementById(id); if(e&&e!==document.activeElement) e.value=val; }
 function hx(n){ return n?('0x'+n.toString(16).toUpperCase()):'0'; }
+// ── Built-in variant-profile auto-suggest (#126) ──
+var PM_SUG=null;
+function pmSync(d){
+  var p=d.profile;var el=document.getElementById('pmSuggest');if(!el)return;
+  if(p&&p.suggest){
+    PM_SUG=p;
+    var nm=document.getElementById('pmName');if(nm)nm.textContent=p.name||'?';
+    el.style.display='block';
+  } else {
+    PM_SUG=null;el.style.display='none';
+  }
+}
+function sf(id,val){ var e=document.getElementById(id); if(e) e.value=val; }
+function pmApply(){
+  var p=PM_SUG;if(!p)return;
+  // One-tap confirm: fill the Signal Map fields from the suggested profile and
+  // apply via the existing sig_cfg path. Steer mapping is left as-is (0 unless
+  // the user already set it). Never applied without this tap.
+  sf('cgDid',hx(p.das_id));
+  sf('cgApB',p.apb); sf('cgApS',p.aps); sf('cgApM',hx(p.apm));
+  sf('cgHoB',p.hob); sf('cgHoS',p.hos); sf('cgHoM',hx(p.hom));
+  saveSigCfg();
+}
 function setSig(d){
   sv('cgDid',hx(d.cfg_das_id)); sv('cgApB',d.cfg_apb); sv('cgApS',d.cfg_aps); sv('cgApM',hx(d.cfg_apm));
   sv('cgHoB',d.cfg_hob); sv('cgHoS',d.cfg_hos); sv('cgHoM',hx(d.cfg_hom));
@@ -1477,6 +1506,7 @@ static String build_json() {
     j += "\"can_dump\":";      j += can_dump_active()                 ? "true" : "false"; j += ',';
     j += "\"blackbox\":";      j += blackbox_status_json();            j += ',';
     j += "\"capability\":";    j += capability_status_json();          j += ',';
+    j += "\"profile\":";       j += profile_match_json();               j += ',';
     j += "\"sleep_ms\":";     j += state.sleep_idle_ms;               j += ',';
     j += "\"wifi_ssid\":\"";  j += json_escape(state.wifi_ssid);      j += "\",";
     j += "\"wifi_pass\":\"";  j += state.wifi_pass[0] ? "***" : "";  j += "\",";
