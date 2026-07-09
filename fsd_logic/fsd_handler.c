@@ -144,7 +144,9 @@ void fsd_handle_follow_distance(FSDState* state, const CANFRAME* frame) {
 
 bool fsd_ap_first_allows(const FSDState* state, uint32_t now_ms) {
     if(!state->ap_first) return true;            // gate off -> always allow
-    if(state->das_ap_state < 2) return false;    // AP not engaged yet
+    // 2 = AVAILABLE (AP offered, NOT engaged); 3 = ACTIVE_NOMINAL is the first
+    // genuinely-engaged state. Injecting at 2 fired 0x3EE while AP was off (#108).
+    if(state->das_ap_state < DAS_APSTATE_ENGAGED) return false;  // AP not engaged yet
     // AP engaged: require it to have held stable for the debounce window.
     return (now_ms - state->ap_unstable_tick_ms) >= AP_FIRST_STABLE_MS;
 }
@@ -165,7 +167,7 @@ bool fsd_soft_engage_allows(FSDState* state) {
 
 void fsd_abort_guard_update(FSDState* state) {
     if(!state->abort_guard) return;
-    if(state->das_ap_state < 2u) {
+    if(state->das_ap_state < DAS_APSTATE_ENGAGED) {
         state->abort_guard_latched = false;          // clean disengage re-arms
     } else if(state->das_ap_state == DAS_APSTATE_ABORTING ||
               state->das_ap_state == DAS_APSTATE_ABORTED) {
@@ -471,7 +473,8 @@ void fsd_handle_das_status_hw3(FSDState* state, const CANFRAME* frame) {
 void fsd_handle_das_status_hw4(FSDState* state, const CANFRAME* frame) {
     if(frame->data_lenght < 7) return;
     // DAS_autopilotState: bit12|4 → byte1 bits[7:4]
-    // 0=UNAVAIL 1=AVAIL 2=ACTIVE_NOMINAL 3=ACTIVE_MIN_DRIVER ...
+    // 0=UNAVAIL 1=UNAVAILABLE/AVAIL-flicker 2=AVAILABLE (offered, not engaged)
+    // 3=ACTIVE_NOMINAL (first engaged) 4=ACTIVE_MIN_DRIVER 6=active 8/9=aborting/aborted
     uint8_t hw4_state = (frame->buffer[1] >> 4) & 0x0F;
     // HW4 Highland (China MIC, fw 2026.20) carries DAS_autopilotState in byte0 low
     // nibble (HW3 position: 1=avail 2=ready 3=engaged) while byte1[7:4] is pinned at
@@ -1028,6 +1031,9 @@ static bool nag_faithful_modec(FSDState* state, const CANFRAME* frame,
     prev_das = das;
 
     // Global gate: AP active, and demand state not satisfied/suspended.
+    // NOTE: this < 2u is the nag-echo gate, NOT the AP-First engagement threshold
+    // (DAS_APSTATE_ENGAGED=3). Nag suppression is intentionally relevant down to
+    // AVAILABLE, so this stays at < 2u by design (#108).
     if(state->das_ap_state < 2u || das == 0 || das == 8 || das == 15) {
         last_raw = 2048; last_level = 0;
         return false;  // pass the real EPAS frame through unmodified

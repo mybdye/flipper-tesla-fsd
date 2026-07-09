@@ -1055,7 +1055,10 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     bool steer_cfg = (g_state.cfg_steer_id != 0);
     // AP-First stability debounce: stamp the last time AP was not engaged, so
     // fsd_ap_first_allows() can require AP held stable for AP_FIRST_STABLE_MS (#100/#108).
-    if (g_state.das_ap_state < 2u) {
+    // < DAS_APSTATE_ENGAGED (3): AVAILABLE(2) is not engaged, so the stability
+    // window measures time actually held at 3+, and dropping to AVAILABLE re-requires
+    // a centred wheel (a drop to 2 is a disengage).
+    if (g_state.das_ap_state < DAS_APSTATE_ENGAGED) {
         g_state.ap_unstable_tick_ms = millis();
         g_state.soft_engage_latched = false;  // re-require centred wheel next engage (#108)
     }

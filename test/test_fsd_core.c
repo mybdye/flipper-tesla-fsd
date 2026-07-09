@@ -554,7 +554,14 @@ static void test_abort_guard(void) {
     s.das_ap_state = 6; fsd_abort_guard_update(&s);
     CHECK(fsd_abort_guard_allows(&s) == false, "re-active mid-cycle: stays suppressed");
 
-    // Clean disengage (das_ap_state < 2) clears the latch -> re-armed.
+    // Dropping to AVAILABLE(2) is a disengage (< DAS_APSTATE_ENGAGED) -> re-arms (#108).
+    s.das_ap_state = 2; fsd_abort_guard_update(&s);
+    CHECK(s.abort_guard_latched == false, "AVAILABLE(2) disengage: latch cleared");
+    CHECK(fsd_abort_guard_allows(&s) == true, "AVAILABLE(2): re-armed, allows");
+
+    // Re-latch, then confirm a full disengage (das_ap_state < 2) also clears.
+    s.das_ap_state = DAS_APSTATE_ABORTING; fsd_abort_guard_update(&s);
+    CHECK(s.abort_guard_latched == true, "re-latched for clean-disengage check");
     s.das_ap_state = 1; fsd_abort_guard_update(&s);
     CHECK(s.abort_guard_latched == false, "clean disengage: latch cleared");
     CHECK(fsd_abort_guard_allows(&s) == true, "re-armed: allows again");
@@ -1115,10 +1122,13 @@ static void test_legacy(void) {
     f.buffer[0] = 0; // mux0
     s.das_ap_state = 0; // AP not engaged
     CHECK(fsd_handle_legacy_autopilot(&s, &f, 2000) == false, "legacy AP-first: blocked, AP not engaged");
-    s.das_ap_state = 2;             // engaged, but...
+    s.das_ap_state = 2;             // AVAILABLE = offered, NOT engaged (#108)
+    s.ap_unstable_tick_ms = 2000;
+    CHECK(fsd_handle_legacy_autopilot(&s, &f, 3200) == false, "legacy AP-first: blocked, AVAILABLE(2) not engaged");
+    s.das_ap_state = 3;             // ACTIVE_NOMINAL = first engaged, but...
     s.ap_unstable_tick_ms = 2000;   // ...only just became stable
     CHECK(fsd_handle_legacy_autopilot(&s, &f, 2500) == false, "legacy AP-first: blocked, not stable yet (500ms)");
-    CHECK(fsd_handle_legacy_autopilot(&s, &f, 3000) != false, "legacy AP-first: allowed, stable >= 1000ms");
+    CHECK(fsd_handle_legacy_autopilot(&s, &f, 3000) != false, "legacy AP-first: allowed, engaged + stable >= 1000ms");
 
     // fsd_ap_first_allows() directly
     FSDState g;
@@ -1126,13 +1136,16 @@ static void test_legacy(void) {
     CHECK(fsd_ap_first_allows(&g, 5000) == true, "ap_first off -> always allowed");
     g.ap_first = true;
     g.das_ap_state = 1;
-    CHECK(fsd_ap_first_allows(&g, 5000) == false, "ap_first: AVAIL(1) not enough");
-    g.das_ap_state = 2;
+    CHECK(fsd_ap_first_allows(&g, 5000) == false, "ap_first: UNAVAIL-flicker(1) not enough");
+    g.das_ap_state = 2;             // AVAILABLE — offered but NOT engaged (#108 bug fix)
     g.ap_unstable_tick_ms = 1000;
-    CHECK(fsd_ap_first_allows(&g, 1500) == false, "ap_first: 500ms < debounce -> block");
-    CHECK(fsd_ap_first_allows(&g, 2000) == true, "ap_first: 1000ms >= debounce -> allow");
-    g.das_ap_state = 3;
-    CHECK(fsd_ap_first_allows(&g, 5000) == true, "ap_first: active(3) + stable -> allow");
+    CHECK(fsd_ap_first_allows(&g, 5000) == false, "ap_first: AVAILABLE(2) blocks even when 'stable'");
+    g.das_ap_state = 3;             // ACTIVE_NOMINAL — first genuinely engaged
+    g.ap_unstable_tick_ms = 1000;
+    CHECK(fsd_ap_first_allows(&g, 1500) == false, "ap_first: engaged but 500ms < debounce -> block");
+    CHECK(fsd_ap_first_allows(&g, 2000) == true, "ap_first: engaged(3) + 1000ms >= debounce -> allow");
+    g.das_ap_state = 6;
+    CHECK(fsd_ap_first_allows(&g, 5000) == true, "ap_first: active(6) + stable -> allow");
 
     // fsd_soft_engage_allows() — steer-jerk soft engage (#108)
     FSDState se;
