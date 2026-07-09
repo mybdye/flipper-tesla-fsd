@@ -1074,7 +1074,8 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     if (frame.id == CAN_ID_BMS_THERMAL)    g_state.seen_bms_thermal++;
     state_exit();
 
-    // Black-box: record every frame (all ids/buses, both modes) and arm a
+    // Black-box: record key diagnostic ids (all buses, both modes; the filter
+    // in blackbox_record keeps the window intact on a busy bus) and arm a
     // capture on an abort transition (#124). Never triggers on a plain
     // disengage — only EVT_ABORT here; bus-off/manual arm from elsewhere.
     blackbox_record(bus, frame, now);

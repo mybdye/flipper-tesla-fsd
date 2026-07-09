@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "fsd_can_ops.h"
+#include "fsd_blackbox_filter.h"
 #include "fsd_blackbox_summary.h"
 #include "fsd_capability.h"
 #include "fsd_capture.h"
@@ -1774,6 +1775,34 @@ static void test_state_init(void) {
     CHECK(s.hw_version == TeslaHW_HW4, "init applies HW4");
 }
 
+// ── black-box capture ID filter (#124) ───────────────────────────────────────
+static void test_blackbox_filter(void) {
+    // Every key id in the curated set is recorded.
+    for (size_t i = 0; i < FSD_BLACKBOX_KEY_ID_COUNT; i++)
+        CHECK(fsd_blackbox_should_record(FSD_BLACKBOX_KEY_IDS[i]),
+              "key id 0x%lX recorded", (unsigned long)FSD_BLACKBOX_KEY_IDS[i]);
+
+    // The abort / steer-jerk analysis ids must be present (the whole point).
+    CHECK(fsd_blackbox_should_record(CAN_ID_EPAS_STATUS),     "0x370 EPAS in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_DAS_STATUS_HW3),  "0x399 DAS_status HW3 in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_DAS_STATUS),      "0x39B DAS_status HW4 in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_DAS_STEER),       "0x488 DAS_steeringControl in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_STEER_ANGLE),     "0x129 steering angle in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_AP_LEGACY),       "0x3EE AP legacy in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_AP_CONTROL),      "0x3FD AP control in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_ESP_STATUS),      "0x145 brake in set");
+    CHECK(fsd_blackbox_should_record(0x238u),                "0x238 map limit in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_DAS_STATUS2),     "0x389 ACC limit in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_DAS_CONTROL),     "0x2B9 DAS_control in set");
+    CHECK(fsd_blackbox_should_record(CAN_ID_DI_SYS_STATUS),   "0x118 state in set");
+
+    // Chatty non-diagnostic frames are dropped (the ~15x rate cut).
+    CHECK(!fsd_blackbox_should_record(CAN_ID_BMS_HV_BUS),  "0x132 BMS dropped");
+    CHECK(!fsd_blackbox_should_record(CAN_ID_ESP_WHEELSPD),"0x175 wheel speeds dropped");
+    CHECK(!fsd_blackbox_should_record(0x000),              "0x000 dropped");
+    CHECK(!fsd_blackbox_should_record(0x7FF),              "0x7FF dropped");
+}
+
 int main(void) {
     printf("test_fsd_core: Tesla FSD protocol core host tests\n");
     test_set_bit();
@@ -1815,6 +1844,7 @@ int main(void) {
     test_extras_and_builders();
     test_profile();
     test_state_init();
+    test_blackbox_filter();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
