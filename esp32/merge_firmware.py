@@ -6,6 +6,7 @@
 # The app-only firmware.bin is still emitted for the in-device OTA updater.
 Import("env")
 import os
+import subprocess
 
 # Bootloader offset differs by chip: 0x1000 on the original ESP32, 0x0 on the
 # newer parts (their ROM loads the bootloader from the start of flash).
@@ -48,15 +49,18 @@ def merge_firmware(source, target, env):
 
     # Standard Arduino-ESP32 layout: partitions @ 0x8000, boot_app0 @ 0xe000,
     # app @ 0x10000 (true for min_spiffs / default_8MB / default_16MB).
-    cmd = (
-        '"%s" "%s" --chip %s merge_bin -o "%s" '
-        '--flash_mode %s --flash_freq %s --flash_size %s '
-        '%s "%s" 0x8000 "%s" 0xe000 "%s" 0x10000 "%s"' % (
-            python, esptool, mcu, merged,
-            flash_mode, flash_freq, flash_size,
-            boot_off, bootloader, partitions, boot_app0, app))
+    # Invoke esptool as an argument list (no shell) so paths with spaces or other
+    # characters are passed through verbatim; check=True fails the build if the
+    # merge fails so CI never ships a half-built image.
+    argv = [
+        python, esptool, "--chip", mcu, "merge_bin", "-o", merged,
+        "--flash_mode", flash_mode, "--flash_freq", flash_freq,
+        "--flash_size", flash_size,
+        boot_off, bootloader, "0x8000", partitions,
+        "0xe000", boot_app0, "0x10000", app,
+    ]
     print("[merge] building full-flash image -> %s" % merged)
-    env.Execute(cmd)
+    subprocess.run(argv, check=True)
 
 
 # Run after the application .bin is produced.
